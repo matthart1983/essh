@@ -1,7 +1,4 @@
-use ratatui::{
-    style::{Color, Style},
-    text::Span,
-};
+use ratatui::style::Color;
 
 /// Format bytes per second into human-readable rate string.
 pub fn format_bytes_rate(bytes_per_sec: f64) -> String {
@@ -98,14 +95,6 @@ pub fn pct_color(pct: f64) -> Color {
     }
 }
 
-/// Create a colored span for a percentage value.
-pub fn pct_span(pct: f64) -> Span<'static> {
-    Span::styled(
-        format!("{:.1}%", pct),
-        Style::default().fg(pct_color(pct)),
-    )
-}
-
 /// Render a horizontal bar gauge like "████████░░░░░░░░░ 45%"
 /// Returns a string of the bar portion (without the percentage).
 pub fn bar_gauge(pct: f64, width: usize) -> String {
@@ -121,14 +110,6 @@ pub fn quality_color(quality: &str) -> Color {
         "Fair" => Color::Yellow,
         _ => Color::Red,
     }
-}
-
-/// Format a quality indicator dot with color.
-pub fn quality_dot(quality: &str) -> Span<'static> {
-    Span::styled(
-        format!("●{}", quality),
-        Style::default().fg(quality_color(quality)),
-    )
 }
 
 #[cfg(test)]

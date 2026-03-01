@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 pub struct ProbeResult {
     pub online: bool,
     pub latency_ms: Option<f64>,
+    #[allow(dead_code)]
     pub last_probed: Instant,
 }
 
@@ -128,6 +129,7 @@ impl FleetProber {
 
 /// Return the color name for a latency value using Netwatch thresholds.
 /// green < 50 ms, yellow < 200 ms, red ≥ 200 ms
+#[allow(dead_code)]
 pub fn latency_color_class(ms: f64) -> &'static str {
     if ms < 50.0 {
         "green"

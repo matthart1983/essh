@@ -23,7 +23,7 @@ pub fn render(
     sort: &ProcessSort,
     process_scroll: usize,
 ) {
-    // Outer border around everything
+    // Outer border fills the full area
     let outer_block = Block::bordered()
         .title(" Host Monitor ")
         .title_style(Style::default().fg(Color::Cyan).bold())
@@ -32,30 +32,17 @@ pub fn render(
     f.render_widget(outer_block, area);
 
     // Fixed section heights (content + bottom border for separators)
-    // cpu(2+1) + mem(2+1) + load(1+1) + net(1+1) + footer(1) = 11
-    let fixed_height: u16 = 3 + 3 + 2 + 2 + 1;
+    let fixed_height: u16 = 3 + 3 + 2 + 2 + 1; // cpu+mem+load+net+footer
     let available = inner.height.saturating_sub(fixed_height);
 
-    // Desired data row counts (header + up to 15 data rows + bottom border)
     let disk_data = metrics.disks.len().min(15) as u16;
     let proc_data = match sort {
         ProcessSort::Cpu => metrics.top_procs_cpu.len(),
         ProcessSort::Memory => metrics.top_procs_mem.len(),
     }.min(15) as u16;
     let desired_disk = disk_data + 2; // +1 header +1 border
-    let desired_proc = proc_data + 1; // +1 header (no border on last section)
-    let desired_total = desired_disk + desired_proc;
 
-    // Distribute available space between disk and process tables
-    let (disk_height, proc_height) = if desired_total <= available {
-        (desired_disk, available.saturating_sub(desired_disk))
-    } else if available >= 2 {
-        let disk_h = ((available as u32) * (desired_disk as u32) / (desired_total as u32).max(1)) as u16;
-        let disk_h = disk_h.max(2);
-        (disk_h, available.saturating_sub(disk_h).max(1))
-    } else {
-        (1, 1)
-    };
+    let disk_height = desired_disk.min(available);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -65,7 +52,7 @@ pub fn render(
             Constraint::Length(2),            // Load: 1 content + 1 border
             Constraint::Length(disk_height),  // Disk table (adaptive, includes border)
             Constraint::Length(2),            // Net: 1 content + 1 border
-            Constraint::Min(proc_height),     // Processes (gets remaining space)
+            Constraint::Min(proc_data + 1),  // Processes (fills remaining space)
             Constraint::Length(1),            // Footer
         ])
         .split(inner);

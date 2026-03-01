@@ -20,7 +20,9 @@ use crate::portfwd::PortForwardManager;
 
 pub struct Notification {
     pub session_label: String,
+    #[allow(dead_code)]
     pub matched_text: String,
+    #[allow(dead_code)]
     pub timestamp: chrono::DateTime<chrono::Local>,
 }
 
@@ -35,6 +37,7 @@ pub struct HostDisplay {
     pub tags: String,
     pub latency_ms: Option<f64>,
     pub latency_history: Vec<u64>,
+    #[allow(dead_code)]
     pub jump_host: Option<String>,
 }
 

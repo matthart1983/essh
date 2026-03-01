@@ -6,7 +6,9 @@ pub struct RemoteFileEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    #[allow(dead_code)]
     pub permissions: String,
+    #[allow(dead_code)]
     pub modified: String,
 }
 

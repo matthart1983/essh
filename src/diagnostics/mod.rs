@@ -169,16 +169,19 @@ impl DiagnosticsEngine {
         m.bytes_received += n;
     }
 
+    #[allow(dead_code)]
     pub async fn record_rtt(&self, rtt_ms: f64) {
         let mut m = self.metrics.write().await;
         m.rtt_ms = Some(rtt_ms);
     }
 
+    #[allow(dead_code)]
     pub async fn record_keepalive_sent(&self) {
         let mut m = self.metrics.write().await;
         m.keepalive_sent += 1;
     }
 
+    #[allow(dead_code)]
     pub async fn record_keepalive_received(&self) {
         let mut m = self.metrics.write().await;
         m.keepalive_received += 1;
@@ -202,6 +205,7 @@ impl DiagnosticsEngine {
         m.auth_method = auth_method;
     }
 
+    #[allow(dead_code)]
     pub async fn set_channels_active(&self, count: u32) {
         let mut m = self.metrics.write().await;
         m.channels_active = count;

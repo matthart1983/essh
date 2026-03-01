@@ -21,6 +21,7 @@ impl MetricHistory {
         self.samples.push_back(value);
     }
 
+    #[allow(dead_code)]
     pub fn samples(&self) -> &VecDeque<u64> {
         &self.samples
     }
@@ -29,14 +30,17 @@ impl MetricHistory {
         self.samples.iter().copied().collect()
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.samples.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn last(&self) -> Option<u64> {
         self.samples.back().copied()
     }

@@ -3,7 +3,6 @@ pub mod history;
 pub mod parser;
 
 pub use collector::HostMetricsCollector;
-pub use history::MetricHistory;
 
 use serde::{Deserialize, Serialize};
 

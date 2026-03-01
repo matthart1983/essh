@@ -6,6 +6,7 @@ use std::time::Instant;
 pub enum SessionState {
     Connecting,
     Active,
+    #[allow(dead_code)]
     Suspended,
     Reconnecting { attempt: u32, max: u32 },
     Disconnected { reason: String },
@@ -119,6 +120,7 @@ fn convert_color(color: vt100::Color) -> Option<ratatui::style::Color> {
 
 /// Represents a single SSH session
 pub struct Session {
+    #[allow(dead_code)]
     pub id: String,
     pub label: String,
     pub hostname: String,

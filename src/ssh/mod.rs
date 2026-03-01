@@ -12,12 +12,14 @@ use tokio::sync::Mutex;
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
     #[error("Connection error: {0}")]
+    #[allow(dead_code)]
     Connection(String),
     #[error("Authentication error: {0}")]
     Auth(String),
     #[error("Host key error: {0}")]
     HostKey(String),
     #[error("Channel error: {0}")]
+    #[allow(dead_code)]
     Channel(String),
     #[error(transparent)]
     Russh(#[from] russh::Error),
@@ -40,6 +42,7 @@ pub struct ConnectConfig {
 }
 
 impl ConnectConfig {
+    #[allow(dead_code)]
     pub fn new(hostname: String, username: String, auth: AuthMethod) -> Self {
         Self {
             hostname,
@@ -107,6 +110,7 @@ impl client::Handler for ClientHandler {
 
 pub struct SshSession {
     pub handle: Handle<ClientHandler>,
+    #[allow(dead_code)]
     session_id: String,
     pub jump_host: Option<String>,
 }
@@ -466,6 +470,7 @@ impl SshSession {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn session_id(&self) -> &str {
         &self.session_id
     }

@@ -161,6 +161,7 @@ pub fn parse_forward_spec(spec: &str) -> Option<(ForwardDirection, u16, String, 
 /// accepted connection through the SSH session via `channel_open_direct_tcpip`.
 ///
 /// Returns a `JoinHandle` that can be aborted to cancel the forward.
+#[allow(dead_code)]
 pub fn start_local_forward(
     ssh_handle: russh::client::Handle<crate::ssh::ClientHandler>,
     forward: &PortForward,

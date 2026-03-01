@@ -63,6 +63,7 @@ impl SessionManager {
         self.active_index.and_then(|i| self.sessions.get(i))
     }
 
+    #[allow(dead_code)]
     pub fn active_session_mut(&mut self) -> Option<&mut Session> {
         self.active_index.and_then(|i| self.sessions.get_mut(i))
     }
@@ -109,10 +110,12 @@ impl SessionManager {
         !self.sessions.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         self.sessions.len()
     }
 
+    #[allow(dead_code)]
     pub fn active_count(&self) -> usize {
         self.sessions.iter().filter(|s| matches!(s.state, SessionState::Active | SessionState::Suspended)).count()
     }
