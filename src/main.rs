@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod diagnostics;
 mod event;
+mod filetransfer;
 mod fleet;
 mod monitor;
 mod notify;
@@ -1026,6 +1027,39 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
+            // Alt+f: toggle file browser
+            KeyCode::Char('f') => {
+                if app.session_manager.has_sessions() {
+                    if app.view == AppView::FileBrowser {
+                        app.view = AppView::Session;
+                        app.file_browser = None;
+                    } else {
+                        let mut browser = filetransfer::FileBrowser::new();
+                        browser.list_local_files();
+                        app.file_browser = Some(browser);
+                        app.view = AppView::FileBrowser;
+                        // Trigger remote listing
+                        if let Some(idx) = app.session_manager.active_index {
+                            if let Some(Some(rt)) = runtimes.get(idx) {
+                                let remote_path = "/home".to_string();
+                                match list_remote_files(&rt.ssh_session.handle, &remote_path).await {
+                                    Ok(files) => {
+                                        if let Some(ref mut fb) = app.file_browser {
+                                            fb.remote_files = files;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if let Some(ref mut fb) = app.file_browser {
+                                            fb.status_message = Some(format!("Remote listing failed: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return Ok(KeyAction::Handled);
+            }
             // Alt+w: close active session
             KeyCode::Char('w') => {
                 if let Some(idx) = app.session_manager.active_index {
@@ -1070,7 +1104,293 @@ async fn handle_key_event(
         AppView::PortForwarding => {
             handle_portfwd_key(key, app)
         }
+        AppView::FileBrowser => {
+            handle_filebrowser_key(key, app, runtimes).await
+        }
     }
+}
+
+async fn handle_filebrowser_key(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    runtimes: &mut Vec<Option<SessionRuntime>>,
+) -> anyhow::Result<KeyAction> {
+    let browser = match app.file_browser.as_mut() {
+        Some(b) => b,
+        None => return Ok(KeyAction::Handled),
+    };
+
+    match key.code {
+        KeyCode::Tab => {
+            browser.toggle_focus();
+        }
+        KeyCode::Down => {
+            browser.next_file();
+        }
+        KeyCode::Up => {
+            browser.prev_file();
+        }
+        KeyCode::Enter => {
+            match browser.focus {
+                filetransfer::FilePaneFocus::Local => {
+                    browser.enter_dir_local();
+                }
+                filetransfer::FilePaneFocus::Remote => {
+                    let had_dir = browser.selected_remote().map(|e| e.is_dir).unwrap_or(false);
+                    if had_dir {
+                        browser.enter_dir_remote();
+                        // Refresh remote listing
+                        let remote_path = browser.remote_path.clone();
+                        if let Some(idx) = app.session_manager.active_index {
+                            if let Some(Some(rt)) = runtimes.get(idx) {
+                                match list_remote_files(&rt.ssh_session.handle, &remote_path).await {
+                                    Ok(files) => {
+                                        if let Some(ref mut fb) = app.file_browser {
+                                            fb.remote_files = files;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if let Some(ref mut fb) = app.file_browser {
+                                            fb.status_message = Some(format!("Error: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Backspace => {
+            match browser.focus {
+                filetransfer::FilePaneFocus::Local => {
+                    browser.parent_local();
+                }
+                filetransfer::FilePaneFocus::Remote => {
+                    browser.parent_remote();
+                    let remote_path = browser.remote_path.clone();
+                    if let Some(idx) = app.session_manager.active_index {
+                        if let Some(Some(rt)) = runtimes.get(idx) {
+                            match list_remote_files(&rt.ssh_session.handle, &remote_path).await {
+                                Ok(files) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.remote_files = files;
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.status_message = Some(format!("Error: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Char('u') => {
+            // Upload: local pane focused, send selected local file to remote
+            if browser.focus == filetransfer::FilePaneFocus::Local {
+                if let (Some(local_entry), Some(idx)) = (
+                    browser.selected_local().cloned(),
+                    app.session_manager.active_index,
+                ) {
+                    if !local_entry.is_dir {
+                        let remote_dest = if browser.remote_path.ends_with('/') {
+                            format!("{}{}", browser.remote_path, local_entry.name)
+                        } else {
+                            format!("{}/{}", browser.remote_path, local_entry.name)
+                        };
+                        browser.transfer = Some(filetransfer::TransferProgress {
+                            filename: local_entry.name.clone(),
+                            direction: filetransfer::TransferDirection::Upload,
+                            bytes_transferred: 0,
+                            total_bytes: local_entry.size,
+                            complete: false,
+                        });
+                        if let Some(Some(rt)) = runtimes.get(idx) {
+                            match upload_file(&rt.ssh_session.handle, &local_entry.path, &remote_dest).await {
+                                Ok(_) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        if let Some(ref mut t) = fb.transfer {
+                                            t.bytes_transferred = t.total_bytes;
+                                            t.complete = true;
+                                        }
+                                        fb.status_message = Some(format!("Uploaded {}", local_entry.name));
+                                        // Refresh remote
+                                        let rp = fb.remote_path.clone();
+                                        match list_remote_files(&rt.ssh_session.handle, &rp).await {
+                                            Ok(files) => fb.remote_files = files,
+                                            Err(_) => {}
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.transfer = None;
+                                        fb.status_message = Some(format!("Upload failed: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Char('d') => {
+            // Download: remote pane focused, download selected remote file to local
+            if browser.focus == filetransfer::FilePaneFocus::Remote {
+                if let (Some(remote_entry), Some(idx)) = (
+                    browser.selected_remote().cloned(),
+                    app.session_manager.active_index,
+                ) {
+                    if !remote_entry.is_dir {
+                        let remote_src = if browser.remote_path.ends_with('/') {
+                            format!("{}{}", browser.remote_path, remote_entry.name)
+                        } else {
+                            format!("{}/{}", browser.remote_path, remote_entry.name)
+                        };
+                        let local_dest = browser.local_path.join(&remote_entry.name);
+                        browser.transfer = Some(filetransfer::TransferProgress {
+                            filename: remote_entry.name.clone(),
+                            direction: filetransfer::TransferDirection::Download,
+                            bytes_transferred: 0,
+                            total_bytes: remote_entry.size,
+                            complete: false,
+                        });
+                        if let Some(Some(rt)) = runtimes.get(idx) {
+                            match download_file(&rt.ssh_session.handle, &remote_src, &local_dest).await {
+                                Ok(_) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        if let Some(ref mut t) = fb.transfer {
+                                            t.bytes_transferred = t.total_bytes;
+                                            t.complete = true;
+                                        }
+                                        fb.status_message = Some(format!("Downloaded {}", remote_entry.name));
+                                        fb.list_local_files();
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.transfer = None;
+                                        fb.status_message = Some(format!("Download failed: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Char('m') => {
+            // Mkdir on the focused pane
+            match browser.focus {
+                filetransfer::FilePaneFocus::Local => {
+                    let new_dir = browser.local_path.join("new_folder");
+                    match std::fs::create_dir(&new_dir) {
+                        Ok(_) => {
+                            browser.status_message = Some("Created new_folder".into());
+                            browser.list_local_files();
+                        }
+                        Err(e) => {
+                            browser.status_message = Some(format!("Mkdir failed: {}", e));
+                        }
+                    }
+                }
+                filetransfer::FilePaneFocus::Remote => {
+                    let new_dir = if browser.remote_path.ends_with('/') {
+                        format!("{}new_folder", browser.remote_path)
+                    } else {
+                        format!("{}/new_folder", browser.remote_path)
+                    };
+                    if let Some(idx) = app.session_manager.active_index {
+                        if let Some(Some(rt)) = runtimes.get(idx) {
+                            match exec_remote_command(&rt.ssh_session.handle, &format!("mkdir -p '{}'", new_dir)).await {
+                                Ok(_) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.status_message = Some("Created new_folder".into());
+                                        let rp = fb.remote_path.clone();
+                                        match list_remote_files(&rt.ssh_session.handle, &rp).await {
+                                            Ok(files) => fb.remote_files = files,
+                                            Err(_) => {}
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.status_message = Some(format!("Mkdir failed: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Delete => {
+            match browser.focus {
+                filetransfer::FilePaneFocus::Local => {
+                    if let Some(entry) = browser.selected_local().cloned() {
+                        let result = if entry.is_dir {
+                            std::fs::remove_dir_all(&entry.path)
+                        } else {
+                            std::fs::remove_file(&entry.path)
+                        };
+                        match result {
+                            Ok(_) => {
+                                browser.status_message = Some(format!("Deleted {}", entry.name));
+                                browser.list_local_files();
+                            }
+                            Err(e) => {
+                                browser.status_message = Some(format!("Delete failed: {}", e));
+                            }
+                        }
+                    }
+                }
+                filetransfer::FilePaneFocus::Remote => {
+                    if let Some(entry) = browser.selected_remote().cloned() {
+                        let full_path = if browser.remote_path.ends_with('/') {
+                            format!("{}{}", browser.remote_path, entry.name)
+                        } else {
+                            format!("{}/{}", browser.remote_path, entry.name)
+                        };
+                        let cmd = if entry.is_dir {
+                            format!("rm -rf '{}'", full_path)
+                        } else {
+                            format!("rm -f '{}'", full_path)
+                        };
+                        if let Some(idx) = app.session_manager.active_index {
+                            if let Some(Some(rt)) = runtimes.get(idx) {
+                                match exec_remote_command(&rt.ssh_session.handle, &cmd).await {
+                                    Ok(_) => {
+                                        if let Some(ref mut fb) = app.file_browser {
+                                            fb.status_message = Some(format!("Deleted {}", entry.name));
+                                            let rp = fb.remote_path.clone();
+                                            match list_remote_files(&rt.ssh_session.handle, &rp).await {
+                                                Ok(files) => fb.remote_files = files,
+                                                Err(_) => {}
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if let Some(ref mut fb) = app.file_browser {
+                                            fb.status_message = Some(format!("Delete failed: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Esc => {
+            app.view = AppView::Session;
+            app.file_browser = None;
+        }
+        _ => {}
+    }
+    Ok(KeyAction::Handled)
 }
 
 fn handle_portfwd_key(
@@ -2300,6 +2620,119 @@ async fn run_on_group(
         handle.await?;
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// File transfer helpers (exec-based remote operations)
+// ---------------------------------------------------------------------------
+
+async fn exec_remote_command(
+    handle: &russh::client::Handle<ssh::ClientHandler>,
+    command: &str,
+) -> anyhow::Result<String> {
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to open session: {}", e))?;
+
+    channel
+        .exec(true, command.to_string())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to exec: {}", e))?;
+
+    let mut output = Vec::new();
+    let mut channel = channel;
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            russh::ChannelMsg::Data { data } => {
+                output.extend_from_slice(&data);
+            }
+            russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&output).to_string())
+}
+
+async fn list_remote_files(
+    handle: &russh::client::Handle<ssh::ClientHandler>,
+    path: &str,
+) -> anyhow::Result<Vec<filetransfer::RemoteFileEntry>> {
+    let output = exec_remote_command(handle, &format!("ls -la '{}'", path)).await?;
+    Ok(filetransfer::parse_ls_output(&output))
+}
+
+async fn upload_file(
+    handle: &russh::client::Handle<ssh::ClientHandler>,
+    local_path: &std::path::Path,
+    remote_path: &str,
+) -> anyhow::Result<()> {
+    let data = std::fs::read(local_path)?;
+
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to open session: {}", e))?;
+
+    channel
+        .exec(true, format!("cat > '{}'", remote_path))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to exec: {}", e))?;
+
+    // Send file data in chunks
+    for chunk in data.chunks(32768) {
+        channel
+            .data(chunk)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send data: {}", e))?;
+    }
+
+    channel.eof().await.map_err(|e| anyhow::anyhow!("Failed to send EOF: {}", e))?;
+
+    // Wait for close
+    let mut channel = channel;
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => break,
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+async fn download_file(
+    handle: &russh::client::Handle<ssh::ClientHandler>,
+    remote_path: &str,
+    local_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to open session: {}", e))?;
+
+    channel
+        .exec(true, format!("cat '{}'", remote_path))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to exec: {}", e))?;
+
+    let mut file_data = Vec::new();
+    let mut channel = channel;
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            russh::ChannelMsg::Data { data } => {
+                file_data.extend_from_slice(&data);
+            }
+            russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => break,
+            _ => {}
+        }
+    }
+
+    std::fs::write(local_path, &file_data)?;
     Ok(())
 }
 

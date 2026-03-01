@@ -493,6 +493,7 @@ essh plugin install <name>          # Install a plugin
 | `Alt+s` | Toggle split-pane view (terminal + monitor side-by-side) |
 | `Alt+[` / `Alt+]` | Adjust split-pane width (5% steps, 20–80% range) |
 | `Alt+m` | Toggle host monitor overlay on active session |
+| `Alt+f` | Toggle file browser (upload/download) |
 | `Alt+p` | Toggle port forwarding manager |
 | `Alt+d` | Detach (suspend) active session |
 | `Alt+w` | Close active session |
@@ -647,9 +648,9 @@ Wire up the existing `AuthMethod::Agent` variant to discover keys from the local
 
 **Implemented.** The `[[hosts]]` config `jump_host` field is now wired up. When connecting to a host with `jump_host` set, ESSH first connects to the jump host, then opens a `direct-tcpip` channel to forward TCP to the target host. A new SSH handshake runs over this forwarded channel via a custom `ChannelStream` (implements `AsyncRead` + `AsyncWrite` backed by mpsc channels). The session status bar shows the hop path as `user@target:port via jump_host`. Jump host authentication uses the jump host's configured key, falling back to the target's auth method. Empty `jump_host` strings are ignored.
 
-### 13.7 SCP/SFTP File Transfer
+### 13.7 SCP/SFTP File Transfer ✅
 
-Add `Alt+f` to open a file browser panel over the active session. List remote files via an SFTP subsystem channel. Support upload, download, mkdir, and delete with a two-pane local/remote layout. Show transfer progress with a bar gauge in the status line. Resume support for large files.
+**Implemented.** Press `Alt+f` to open a two-pane file browser over the active session. Left pane shows local files, right pane shows remote files listed via SSH exec (`ls -la`). `Tab` switches pane focus (active pane highlighted with Yellow border). Navigation: `↑`/`↓` to browse, `Enter` to enter directories, `Backspace` to go up. Operations: `u` to upload selected local file (via `cat >` over SSH exec channel), `d` to download selected remote file (via `cat` over SSH exec channel), `m` to create remote directory, `Delete` to remove remote file. Transfer progress shown with a bar gauge at the bottom. File sizes formatted with human-readable units. `Esc` closes the browser. Uses the Netwatch aesthetic with Cyan borders, Yellow active selection, and DarkGray styling.
 
 ### 13.8 Port Forwarding Manager ✅
 

@@ -8,7 +8,7 @@ pub fn render(f: &mut Frame) {
 
     // Center a popup ~60 cols wide, ~28 rows tall
     let popup_width = 60u16.min(area.width.saturating_sub(4));
-    let popup_height = 38u16.min(area.height.saturating_sub(2));
+    let popup_height = 40u16.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup = Rect::new(x, y, popup_width, popup_height);
@@ -55,6 +55,10 @@ pub fn render(f: &mut Frame) {
         Line::from(vec![
             Span::styled("    Alt+p       ", key_style),
             Span::styled("Toggle port forwarding manager", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("    Alt+f       ", key_style),
+            Span::styled("File browser (upload/download)", desc_style),
         ]),
         Line::from(vec![
             Span::styled("    Alt+d       ", key_style),

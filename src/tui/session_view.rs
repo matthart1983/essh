@@ -201,6 +201,8 @@ pub fn render_footer(f: &mut Frame, area: Rect) {
         Span::raw(":Split  "),
         Span::styled("Alt+m", Style::default().fg(Color::Cyan)),
         Span::raw(":Monitor  "),
+        Span::styled("Alt+f", Style::default().fg(Color::Cyan)),
+        Span::raw(":Files  "),
         Span::styled("Alt+d", Style::default().fg(Color::Cyan)),
         Span::raw(":Detach  "),
         Span::styled("Alt+w", Style::default().fg(Color::Cyan)),

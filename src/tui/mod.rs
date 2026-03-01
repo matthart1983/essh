@@ -1,4 +1,5 @@
 pub mod dashboard;
+pub mod filebrowser_view;
 pub mod help;
 pub mod host_monitor;
 pub mod portfwd_view;
@@ -11,6 +12,7 @@ use ratatui::{
     widgets::TableState,
 };
 
+use crate::filetransfer::FileBrowser;
 use crate::session::manager::SessionManager;
 use crate::monitor::{HostMetrics, history::MetricHistory};
 use crate::diagnostics::DiagnosticsSnapshot;
@@ -57,6 +59,7 @@ pub enum AppView {
     Session,
     Monitor,
     PortForwarding,
+    FileBrowser,
 }
 
 pub struct App {
@@ -90,6 +93,8 @@ pub struct App {
     pub port_forward_managers: Vec<PortForwardManager>,
     pub port_forward_input: String,
     pub port_forward_adding: bool,
+    // File browser
+    pub file_browser: Option<FileBrowser>,
 }
 
 impl App {
@@ -119,6 +124,7 @@ impl App {
             port_forward_managers: Vec::new(),
             port_forward_input: String::new(),
             port_forward_adding: false,
+            file_browser: None,
         }
     }
 
@@ -414,6 +420,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 // Port forward overlay
                 if let Some(mgr) = app.port_forward_managers.get(active_idx) {
                     portfwd_view::render(frame, mgr, &app.port_forward_input, app.port_forward_adding);
+                }
+            }
+        }
+        AppView::FileBrowser => {
+            if let Some(active_idx) = app.session_manager.active_index {
+                let area = frame.area();
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Min(6),
+                    ])
+                    .split(area);
+
+                session_view::render_tab_bar(
+                    frame,
+                    chunks[0],
+                    &app.session_manager.sessions,
+                    active_idx,
+                    &app.notifications,
+                );
+
+                if let Some(ref browser) = app.file_browser {
+                    filebrowser_view::render(frame, chunks[1], browser);
                 }
             }
         }
