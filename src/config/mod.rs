@@ -189,7 +189,7 @@ impl Default for HostMonitorConfig {
             enabled: true,
             cpu_interval: 1,
             memory_interval: 2,
-            process_count: 10,
+            process_count: 15,
             history_samples: 60,
         }
     }
@@ -495,7 +495,7 @@ mod tests {
         assert!(cfg.host_monitor.enabled);
         assert_eq!(cfg.host_monitor.cpu_interval, 1);
         assert_eq!(cfg.host_monitor.memory_interval, 2);
-        assert_eq!(cfg.host_monitor.process_count, 10);
+        assert_eq!(cfg.host_monitor.process_count, 15);
         assert_eq!(cfg.host_monitor.history_samples, 60);
         assert_eq!(cfg.session.max_concurrent, 9);
         assert_eq!(cfg.session.scrollback_lines, 10000);

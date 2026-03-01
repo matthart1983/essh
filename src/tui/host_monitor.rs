@@ -34,11 +34,11 @@ pub fn render(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),   // CPU
-            Constraint::Length(5),   // Memory
-            Constraint::Length(3),   // Load + Uptime
-            Constraint::Min(3),     // Disk (flexible — takes remaining space with processes)
-            Constraint::Length(3),   // Net I/O
+            Constraint::Length(4),   // CPU (compact)
+            Constraint::Length(3),   // Memory (compact)
+            Constraint::Length(2),   // Load + Uptime
+            Constraint::Min(6),     // Disk + Processes (flexible)
+            Constraint::Length(2),   // Net I/O
             Constraint::Length(2),   // Footer
         ])
         .split(inner);
@@ -69,7 +69,14 @@ fn render_cpu(f: &mut Frame, area: Rect, metrics: &HostMetrics, history: &Metric
     let cpu_bar_width = (area.width as usize).saturating_sub(20);
     let bar = widgets::bar_gauge(metrics.cpu_percent, cpu_bar_width);
 
-    let mut lines = vec![
+    // Per-core summary on the bar line
+    let core_summary: String = metrics.cpu_per_core.iter().enumerate()
+        .take(8)
+        .map(|(i, &pct)| format!("C{}:{:.0}%", i, pct))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let lines = vec![
         Line::from(vec![
             Span::styled(" CPU  ", Style::default().fg(Color::Cyan).bold()),
             Span::styled(format!("{:5.1}%  ", metrics.cpu_percent), Style::default().fg(widgets::pct_color(metrics.cpu_percent))),
@@ -80,24 +87,11 @@ fn render_cpu(f: &mut Frame, area: Rect, metrics: &HostMetrics, history: &Metric
             Span::styled(bar, Style::default().fg(widgets::pct_color(metrics.cpu_percent))),
             Span::raw(format!(" {:.0}%", metrics.cpu_percent)),
         ]),
+        Line::from(vec![
+            Span::raw("      "),
+            Span::styled(core_summary, Style::default().fg(Color::DarkGray)),
+        ]),
     ];
-
-    // Per-core display (up to 2 rows of 2 cores each)
-    let cores = &metrics.cpu_per_core;
-    let mut core_lines = Vec::new();
-    for chunk in cores.chunks(2) {
-        let mut spans = vec![Span::raw("      ")];
-        for (j, &pct) in chunk.iter().enumerate() {
-            let core_idx = core_lines.len() * 2 + j;
-            let core_bar = widgets::bar_gauge(pct, 11);
-            spans.push(Span::styled(format!("Core {}: ", core_idx), Style::default().fg(Color::DarkGray)));
-            spans.push(Span::styled(core_bar, Style::default().fg(widgets::pct_color(pct))));
-            spans.push(Span::raw(format!(" {:4.0}%   ", pct)));
-        }
-        core_lines.push(Line::from(spans));
-        if core_lines.len() >= 2 { break; } // max 2 rows
-    }
-    lines.extend(core_lines);
 
     let block = Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::DarkGray));
     let paragraph = Paragraph::new(lines).block(block);
@@ -117,27 +111,19 @@ fn render_memory(f: &mut Frame, area: Rect, metrics: &HostMetrics, history: &Met
     let sparkline_width = (area.width as usize).saturating_sub(20);
     let spark_str = widgets::sparkline_string(&mem_data, sparkline_width);
 
-    let bar_width = (area.width as usize).saturating_sub(20);
-    let bar = widgets::bar_gauge(mem_pct, bar_width);
-
-    let swap_text = format!("Swap: {} / {}", 
+    let swap_text = format!("  Swap: {} / {}",
         widgets::format_kb(metrics.mem_swap_used_kb),
         widgets::format_kb(metrics.mem_swap_total_kb));
 
     let lines = vec![
         Line::from(vec![
             Span::styled(" MEM  ", Style::default().fg(Color::Cyan).bold()),
-            Span::raw(format!("{} / {} ({:.0}%)  ", used, total, mem_pct)),
-            Span::styled(swap_text, Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
-            Span::raw("      "),
+            Span::styled(format!("{:5.1}%  ", mem_pct), Style::default().fg(widgets::pct_color(mem_pct))),
             Span::styled(spark_str, Style::default().fg(widgets::pct_color(mem_pct))),
         ]),
         Line::from(vec![
-            Span::raw("      "),
-            Span::styled(bar, Style::default().fg(widgets::pct_color(mem_pct))),
-            Span::raw(format!(" {:.0}%", mem_pct)),
+            Span::raw(format!("      {} / {}", used, total)),
+            Span::styled(swap_text, Style::default().fg(Color::DarkGray)),
         ]),
     ];
 
@@ -169,7 +155,7 @@ fn render_disks(f: &mut Frame, area: Rect, metrics: &HostMetrics) {
         Cell::from("Use%").style(Style::default().fg(Color::Cyan).bold()),
     ]).height(1);
 
-    let rows: Vec<Row> = metrics.disks.iter().take(10).map(|disk| {
+    let rows: Vec<Row> = metrics.disks.iter().take(15).map(|disk| {
         let avail = disk.total_bytes.saturating_sub(disk.used_bytes);
         let bar = widgets::bar_gauge(disk.use_pct, 10);
         Row::new(vec![
