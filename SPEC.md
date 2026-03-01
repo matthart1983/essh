@@ -563,7 +563,7 @@ essh/
     ├── main.rs                 # Entry point, CLI dispatch, TUI event loop, session management
     ├── event.rs                # Keyboard/tick/resize event handling
     ├── ssh/
-    │   └── mod.rs              # SSH connection, authentication, shell channel
+    │   └── mod.rs              # SSH connection, auth, shell channel, jump host (ProxyJump)
     ├── session/
     │   ├── mod.rs              # Session state, VirtualTerminal (vt100-backed)
     │   └── manager.rs          # Concurrent session lifecycle management
@@ -580,11 +580,23 @@ essh/
     │   └── mod.rs              # TOML config parsing and defaults
     ├── audit/
     │   └── mod.rs              # Structured JSON audit logging
+    ├── fleet/
+    │   └── mod.rs              # Live fleet health — background TCP probes, latency tracking
+    ├── recording/
+    │   └── mod.rs              # Session recording (asciicast v2) & replay
+    ├── filetransfer/
+    │   └── mod.rs              # Two-pane file browser, upload/download via SSH exec
+    ├── portfwd/
+    │   └── mod.rs              # Port forwarding manager, local TCP proxy via direct-tcpip
+    ├── notify/
+    │   └── mod.rs              # Background activity notification matching (regex)
     ├── tui/
     │   ├── mod.rs              # App state, render dispatch, view management
     │   ├── dashboard.rs        # Dashboard view (sessions, hosts, fleet, config tabs)
     │   ├── session_view.rs     # Terminal rendering, tab bar, status bar, footer
     │   ├── host_monitor.rs     # Host monitor overlay (htop-style diagnostics)
+    │   ├── filebrowser_view.rs # Two-pane file browser UI
+    │   ├── portfwd_view.rs     # Port forwarding manager panel
     │   ├── help.rs             # Help overlay with keybinding reference
     │   └── widgets.rs          # Sparklines, bar gauges, format helpers
     └── cli/
@@ -670,6 +682,6 @@ Wire up the existing `AuthMethod::Agent` variant to discover keys from the local
 
 1. ~~Should host metrics collection use a dedicated SSH channel or multiplex over the shell channel?~~ **Resolved:** Uses dedicated SSH exec channels per metric collection cycle.
 2. ~~Should the virtual terminal emulator support full alternate screen (`vim`, `htop` on remote)?~~ **Resolved:** Yes — `vt100::Parser` provides full alternate screen support.
-3. ~~Should we support split-pane views (terminal + monitor side-by-side) in addition to the overlay toggle?~~ **Planned:** See §13.5.
+3. ~~Should we support split-pane views (terminal + monitor side-by-side) in addition to the overlay toggle?~~ **Resolved:** Implemented in §13.5 — `Alt+s` toggles split-pane with adjustable width.
 4. Plugin system architecture — sandboxing vs. ecosystem reach tradeoff? *(deferred to M10)*
 5. Should we support Windows or Linux/macOS only?

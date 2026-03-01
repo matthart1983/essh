@@ -40,6 +40,11 @@
 | **Auto-Reconnect** | Exponential backoff reconnection on disconnect (2s → 30s cap). Scrollback preserved across reconnects. Tab bar shows `● Recon. 2/5`. |
 | **Session Recording** | Record terminal I/O to asciicast v2 files. Replay with `essh session replay <id>` — pause, speed control (0.25×–16×), and quit. |
 | **Audit Logging** | Structured JSON audit trail — connection attempts, auth results, host key events, session lifecycle. |
+| **Split-Pane View** | `Alt+s` splits terminal + host monitor side-by-side. Adjustable width with `Alt+[`/`Alt+]` (20–80% range). |
+| **Jump Host / ProxyJump** | Connect through bastion hosts via `jump_host` config. SSH-over-SSH using `direct-tcpip` channels. Status bar shows hop path. |
+| **File Transfer** | `Alt+f` opens a two-pane file browser. Upload/download via SSH exec channels. Transfer progress bar. |
+| **Port Forwarding** | `Alt+p` manages local TCP port forwards. Live add/remove with SSH `direct-tcpip` proxy. Active forwards shown in status bar. |
+| **Background Notifications** | Regex-based alerts when background sessions match patterns (e.g. `ERROR`, `build complete`). Yellow `!` tab indicator. |
 | **TUI Dashboard** | 4-tab dashboard (Sessions, Hosts, Fleet, Config) with a Netwatch-inspired Cyan/Yellow/DarkGray aesthetic. |
 
 ---
@@ -81,7 +86,7 @@
 ├──────────────────────────────────────────────────────────────────────┤
 │ RTT:12.3ms  ↑1.2KB/s  ↓48.5KB/s  Loss:0.0%  ●Excellent  Up:1h24m │
 ├──────────────────────────────────────────────────────────────────────┤
-│ Alt+←→:Switch  Alt+m:Monitor  Alt+d:Detach  Alt+w:Close  Alt+h:Help│
+│ Alt+←→:Switch  Alt+s:Split  Alt+f:Files  Alt+p:Fwd  Alt+d:Detach  Alt+w:Close│
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -195,7 +200,7 @@ keepalive_interval = 15
 enabled = true
 cpu_interval = 1
 memory_interval = 2
-process_count = 10
+process_count = 15
 history_samples = 60
 
 [session]
@@ -204,6 +209,7 @@ reconnect_max_retries = 5
 max_concurrent = 9
 scrollback_lines = 10000
 recording = false            # Set true to record sessions as asciicast v2
+notification_patterns = []
 
 [fleet]
 probe_enabled = true
@@ -242,6 +248,7 @@ role = "web"
 name = "db-primary"
 hostname = "10.0.2.10"
 user = "dba"
+jump_host = "web-prod-1"
 
 [hosts.tags]
 env = "production"
@@ -287,6 +294,10 @@ key = "~/.ssh/deploy_key"
 | `Alt+d` | Detach to dashboard |
 | `Alt+w` | Close active session |
 | `Alt+r` | Rename active session |
+| `Alt+s` | Toggle split-pane view |
+| `Alt+[` / `Alt+]` | Adjust split-pane width |
+| `Alt+f` | File browser (upload/download) |
+| `Alt+p` | Port forwarding manager |
 
 ### Dashboard
 
@@ -381,6 +392,7 @@ essh audit tail [-l lines]            Show recent audit entries
 | Serialization | `serde`, `serde_json`, `toml` | Config, audit logs, diagnostics |
 | Crypto | `sha2`, `base64` | Fingerprint hashing |
 | Utilities | `chrono`, `uuid`, `dirs`, `thiserror`, `anyhow` | Time, IDs, paths, errors |
+| Pattern Matching | `regex` | Background notification pattern matching |
 
 ### Module Structure
 
@@ -395,9 +407,14 @@ src/
 │   ├── dashboard.rs     # Dashboard with 4 tabs, host search/filter bar
 │   ├── session_view.rs  # Terminal renderer, tab bar, status bar
 │   ├── host_monitor.rs  # CPU/MEM/Disk/Net/Process panels
+│   ├── filebrowser_view.rs  # Two-pane file browser UI
+│   ├── portfwd_view.rs      # Port forwarding manager panel
 │   ├── help.rs          # Help overlay popup
 │   └── widgets.rs       # Sparklines, bar gauges, formatters
+├── filetransfer/        # Two-pane file browser, upload/download via SSH exec
 ├── fleet/               # Live fleet health — background TCP probes, latency tracking
+├── notify/              # Background activity notification matching (regex)
+├── portfwd/             # Port forwarding manager, local TCP proxy
 ├── recording/           # Session recording (asciicast v2) & replay
 ├── monitor/             # Remote host metric collection
 │   ├── collector.rs     # SSH exec-based metric gathering
@@ -426,7 +443,7 @@ Contributions are welcome! Please:
 ```bash
 cargo build              # Debug build
 cargo build --release    # Release build
-cargo test               # Run all tests (94 tests)
+cargo test               # Run all tests (144 tests)
 cargo clippy             # Lint checks
 cargo fmt --check        # Format check
 ```
