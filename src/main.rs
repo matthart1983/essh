@@ -971,8 +971,8 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+m: toggle monitor
-            KeyCode::Char('m') => {
+            // Alt+m: toggle monitor (µ is Option+m on macOS)
+            KeyCode::Char('m') | KeyCode::Char('µ') => {
                 if app.session_manager.has_sessions() {
                     app.view = if app.view == AppView::Monitor {
                         AppView::Session
@@ -983,8 +983,8 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+s: toggle split-pane view (terminal + monitor side-by-side)
-            KeyCode::Char('s') => {
+            // Alt+s: toggle split-pane view (ß is Option+s on macOS)
+            KeyCode::Char('s') | KeyCode::Char('ß') => {
                 if app.session_manager.has_sessions() {
                     app.split_pane = !app.split_pane;
                 }
@@ -1004,18 +1004,18 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+d: detach (go back to dashboard)
-            KeyCode::Char('d') => {
+            // Alt+d: detach (go back to dashboard) (∂ is Option+d on macOS)
+            KeyCode::Char('d') | KeyCode::Char('∂') => {
                 app.view = AppView::Dashboard;
                 return Ok(KeyAction::Handled);
             }
-            // Alt+h or Alt+?: toggle help
-            KeyCode::Char('h') | KeyCode::Char('?') => {
+            // Alt+h or Alt+?: toggle help (˙ is Option+h on macOS)
+            KeyCode::Char('h') | KeyCode::Char('?') | KeyCode::Char('˙') => {
                 app.show_help = !app.show_help;
                 return Ok(KeyAction::Handled);
             }
-            // Alt+p: toggle port forwarding manager
-            KeyCode::Char('p') => {
+            // Alt+p: toggle port forwarding manager (π is Option+p on macOS)
+            KeyCode::Char('p') | KeyCode::Char('π') => {
                 if app.session_manager.has_sessions() {
                     app.view = if app.view == AppView::PortForwarding {
                         app.port_forward_adding = false;
@@ -1027,8 +1027,8 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+f: toggle file browser
-            KeyCode::Char('f') => {
+            // Alt+f: toggle file browser (ƒ is Option+f on macOS)
+            KeyCode::Char('f') | KeyCode::Char('ƒ') => {
                 if app.session_manager.has_sessions() {
                     if app.view == AppView::FileBrowser {
                         app.view = AppView::Session;
@@ -1060,8 +1060,8 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+w: close active session
-            KeyCode::Char('w') => {
+            // Alt+w: close active session (∑ is Option+w on macOS)
+            KeyCode::Char('w') | KeyCode::Char('∑') => {
                 if let Some(idx) = app.session_manager.active_index {
                     // Close SSH connection
                     if let Some(Some(rt)) = runtimes.get_mut(idx) {
@@ -1082,6 +1082,71 @@ async fn handle_key_event(
 
                     if !app.session_manager.has_sessions() {
                         app.view = AppView::Dashboard;
+                    }
+                }
+                return Ok(KeyAction::Handled);
+            }
+            _ => {}
+        }
+    }
+
+    // macOS: Option key sends Unicode chars without ALT modifier flag.
+    // Catch them here so they work regardless of terminal emulator config.
+    if !is_alt {
+        match key.code {
+            KeyCode::Char('µ') => {
+                // Option+m: toggle monitor
+                if app.session_manager.has_sessions() {
+                    app.view = if app.view == AppView::Monitor {
+                        AppView::Session
+                    } else {
+                        app.monitor_process_scroll = 0;
+                        AppView::Monitor
+                    };
+                }
+                return Ok(KeyAction::Handled);
+            }
+            KeyCode::Char('ß') => {
+                // Option+s: toggle split-pane
+                if app.session_manager.has_sessions() {
+                    app.split_pane = !app.split_pane;
+                }
+                return Ok(KeyAction::Handled);
+            }
+            KeyCode::Char('∂') => {
+                // Option+d: detach to dashboard
+                app.view = AppView::Dashboard;
+                return Ok(KeyAction::Handled);
+            }
+            KeyCode::Char('˙') => {
+                // Option+h: toggle help
+                app.show_help = !app.show_help;
+                return Ok(KeyAction::Handled);
+            }
+            KeyCode::Char('π') => {
+                // Option+p: toggle port forwarding
+                if app.session_manager.has_sessions() {
+                    app.view = if app.view == AppView::PortForwarding {
+                        app.port_forward_adding = false;
+                        app.port_forward_input.clear();
+                        AppView::Session
+                    } else {
+                        AppView::PortForwarding
+                    };
+                }
+                return Ok(KeyAction::Handled);
+            }
+            KeyCode::Char('ƒ') => {
+                // Option+f: toggle file browser
+                if app.session_manager.has_sessions() {
+                    if app.view == AppView::FileBrowser {
+                        app.view = AppView::Session;
+                        app.file_browser = None;
+                    } else {
+                        let mut browser = filetransfer::FileBrowser::new();
+                        browser.list_local_files();
+                        app.file_browser = Some(browser);
+                        app.view = AppView::FileBrowser;
                     }
                 }
                 return Ok(KeyAction::Handled);
