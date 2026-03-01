@@ -4,7 +4,9 @@ mod cli;
 mod config;
 mod diagnostics;
 mod event;
+mod fleet;
 mod monitor;
+mod recording;
 mod session;
 mod ssh;
 mod tui;
@@ -44,6 +46,41 @@ struct SessionRuntime {
     channel_tx: tokio::sync::mpsc::Sender<SessionInput>,
     diagnostics: DiagnosticsEngine,
     monitor: Option<monitor::HostMetricsCollector>,
+    connect_config: ConnectConfig,
+}
+
+/// Tracks reconnect state for a session during exponential backoff.
+struct ReconnectTracker {
+    attempt: u32,
+    max_retries: u32,
+    last_attempt: std::time::Instant,
+    backoff_secs: u64,
+}
+
+impl ReconnectTracker {
+    fn new(max_retries: u32) -> Self {
+        Self {
+            attempt: 0,
+            max_retries,
+            last_attempt: std::time::Instant::now(),
+            backoff_secs: 0, // first retry immediate, then 1s, 2s, 4s...
+        }
+    }
+
+    fn should_retry(&self) -> bool {
+        self.attempt <= self.max_retries
+            && self.last_attempt.elapsed() >= Duration::from_secs(self.backoff_secs)
+    }
+
+    fn record_attempt(&mut self) {
+        self.attempt += 1;
+        self.last_attempt = std::time::Instant::now();
+        self.backoff_secs = (1u64 << self.attempt.min(5)).min(30); // 1, 2, 4, 8, 16, 30
+    }
+
+    fn exhausted(&self) -> bool {
+        self.attempt > self.max_retries
+    }
 }
 
 #[tokio::main]
@@ -82,6 +119,8 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
             } else if let Some(ref default_key) = config.general.default_key {
                 let expanded = shellexpand::tilde(default_key).to_string();
                 AuthMethod::KeyFile(expanded.into())
+            } else if std::env::var("SSH_AUTH_SOCK").is_ok() {
+                AuthMethod::Agent
             } else {
                 let pw = prompt_password(&format!("{}@{}'s password: ", user, host))?;
                 AuthMethod::Password(pw)
@@ -223,36 +262,64 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
 
         Commands::Session { action } => match action {
             SessionAction::List => {
-                let session_dir = AppConfig::data_dir().join("sessions");
-                if session_dir.exists() {
-                    for entry in std::fs::read_dir(&session_dir)? {
-                        let entry = entry?;
-                        println!("{}", entry.file_name().to_string_lossy());
+                // List recordings
+                match recording::list_recordings() {
+                    Ok(recs) if recs.is_empty() => {
+                        println!("No recordings found.");
+                        // Fall back to listing diagnostics sessions
+                        let session_dir = AppConfig::data_dir().join("sessions");
+                        if session_dir.exists() {
+                            let mut count = 0;
+                            for entry in std::fs::read_dir(&session_dir)? {
+                                let entry = entry?;
+                                println!("  {}", entry.file_name().to_string_lossy());
+                                count += 1;
+                            }
+                            if count > 0 {
+                                println!("({} diagnostics session logs)", count);
+                            }
+                        }
                     }
-                } else {
-                    println!("No sessions recorded yet.");
+                    Ok(recs) => {
+                        println!("{:<40} {}", "Session ID", "File");
+                        println!("{}", "-".repeat(80));
+                        for (name, path) in &recs {
+                            println!("{:<40} {}", name, path.display());
+                        }
+                        println!("\n{} recording(s) found.", recs.len());
+                    }
+                    Err(e) => println!("Error listing recordings: {}", e),
                 }
             }
             SessionAction::Replay { id } => {
-                let path = AppConfig::data_dir()
-                    .join("sessions")
-                    .join(format!("{}.jsonl", id));
-                if path.exists() {
-                    let content = std::fs::read_to_string(&path)?;
-                    for line in content.lines() {
-                        let snap: diagnostics::DiagnosticsSnapshot = serde_json::from_str(line)?;
-                        println!(
-                            "[{}] RTT={:?}ms  ↑{:.0}B/s  ↓{:.0}B/s  Loss={:.1}%  Quality={:?}",
-                            snap.timestamp,
-                            snap.rtt_ms,
-                            snap.throughput_up_bps,
-                            snap.throughput_down_bps,
-                            snap.packet_loss_pct,
-                            snap.quality
-                        );
-                    }
+                let cast_path = recording::recording_path(&id);
+                if cast_path.exists() {
+                    replay_recording(&cast_path).await?;
                 } else {
-                    println!("Session {} not found.", id);
+                    // Fall back to diagnostics replay
+                    let diag_path = AppConfig::data_dir()
+                        .join("sessions")
+                        .join(format!("{}.jsonl", id));
+                    if diag_path.exists() {
+                        let content = std::fs::read_to_string(&diag_path)?;
+                        for line in content.lines() {
+                            let snap: diagnostics::DiagnosticsSnapshot =
+                                serde_json::from_str(line)?;
+                            println!(
+                                "[{}] RTT={:?}ms  ↑{:.0}B/s  ↓{:.0}B/s  Loss={:.1}%  Quality={:?}",
+                                snap.timestamp,
+                                snap.rtt_ms,
+                                snap.throughput_up_bps,
+                                snap.throughput_down_bps,
+                                snap.packet_loss_pct,
+                                snap.quality
+                            );
+                        }
+                    } else {
+                        println!("Session {} not found.", id);
+                        println!("Checked: {}", cast_path.display());
+                        println!("         {}", diag_path.display());
+                    }
                 }
             }
         },
@@ -555,6 +622,16 @@ async fn tui_main_loop(
     // Tick counter for periodic monitor collection
     let mut tick_count: u64 = 0;
 
+    // Per-session reconnect trackers (indexed same as sessions)
+    let mut reconnect_trackers: Vec<Option<ReconnectTracker>> = Vec::new();
+
+    // Fleet health prober
+    let mut fleet_prober = fleet::FleetProber::new(
+        config.fleet.probe_interval,
+        config.fleet.probe_timeout,
+        config.fleet.latency_history_samples,
+    );
+
     loop {
         // Draw
         terminal.draw(|frame| {
@@ -564,11 +641,40 @@ async fn tui_main_loop(
         // Poll session output (non-blocking drain from all active sessions)
         for (i, rx_opt) in session_output_rxs.iter_mut().enumerate() {
             if let Some(rx) = rx_opt {
-                while let Ok(data) = rx.try_recv() {
-                    if let Some(session) = app.session_manager.sessions.get_mut(i) {
-                        session.terminal.process(&data);
-                        if app.session_manager.active_index != Some(i) {
-                            session.has_new_output = true;
+                loop {
+                    match rx.try_recv() {
+                        Ok(data) => {
+                            if let Some(session) = app.session_manager.sessions.get_mut(i) {
+                                session.terminal.process(&data);
+                                if app.session_manager.active_index != Some(i) {
+                                    session.has_new_output = true;
+                                }
+                            }
+                        }
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                            // Channel I/O task exited — session disconnected
+                            if let Some(session) = app.session_manager.sessions.get(i) {
+                                if matches!(session.state, SessionState::Active) {
+                                    let should_reconnect = config.session.auto_reconnect
+                                        && runtimes.get(i).and_then(|r| r.as_ref()).is_some();
+                                    if should_reconnect {
+                                        let max = config.session.reconnect_max_retries;
+                                        if let Some(session) = app.session_manager.sessions.get_mut(i) {
+                                            session.state = SessionState::Reconnecting { attempt: 1, max };
+                                        }
+                                        while reconnect_trackers.len() <= i {
+                                            reconnect_trackers.push(None);
+                                        }
+                                        reconnect_trackers[i] = Some(ReconnectTracker::new(max));
+                                    } else if let Some(session) = app.session_manager.sessions.get_mut(i) {
+                                        session.state = SessionState::Disconnected {
+                                            reason: "Connection lost".to_string(),
+                                        };
+                                    }
+                                }
+                            }
+                            break;
                         }
                     }
                 }
@@ -585,6 +691,7 @@ async fn tui_main_loop(
                     &audit,
                     &mut runtimes,
                     &mut session_output_rxs,
+                    &mut reconnect_trackers,
                 )
                 .await?;
                 if handled == KeyAction::Quit {
@@ -647,6 +754,106 @@ async fn tui_main_loop(
                         }
                     }
                 }
+
+                // Auto-reconnect: attempt reconnection for disconnected sessions
+                for i in 0..app.session_manager.sessions.len() {
+                    let is_reconnecting = matches!(
+                        app.session_manager.sessions.get(i).map(|s| &s.state),
+                        Some(SessionState::Reconnecting { .. })
+                    );
+                    if !is_reconnecting {
+                        continue;
+                    }
+
+                    let tracker = reconnect_trackers
+                        .get_mut(i)
+                        .and_then(|t| t.as_mut());
+                    let tracker = match tracker {
+                        Some(t) => t,
+                        None => continue,
+                    };
+
+                    if tracker.exhausted() {
+                        if let Some(session) = app.session_manager.sessions.get_mut(i) {
+                            session.state = SessionState::Disconnected {
+                                reason: "Reconnect failed (max retries)".to_string(),
+                            };
+                        }
+                        reconnect_trackers[i] = None;
+                        continue;
+                    }
+
+                    if !tracker.should_retry() {
+                        continue;
+                    }
+
+                    // Get connect config from current runtime
+                    let connect_config = match runtimes.get(i).and_then(|r| r.as_ref()) {
+                        Some(rt) => rt.connect_config.clone(),
+                        None => continue,
+                    };
+
+                    tracker.record_attempt();
+                    let attempt = tracker.attempt;
+                    let max = tracker.max_retries;
+
+                    if let Some(session) = app.session_manager.sessions.get_mut(i) {
+                        session.state = SessionState::Reconnecting { attempt, max };
+                    }
+                    app.set_status(format!(
+                        "Reconnecting to {} ({}/{})...",
+                        connect_config.hostname, attempt, max
+                    ));
+
+                    // Attempt reconnect
+                    match reconnect_session(
+                        i,
+                        &connect_config,
+                        config,
+                        &mut runtimes,
+                        &mut session_output_rxs,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            if let Some(session) = app.session_manager.sessions.get_mut(i) {
+                                session.state = SessionState::Active;
+                            }
+                            reconnect_trackers[i] = None;
+                            app.set_status(format!("Reconnected to {}", connect_config.hostname));
+                        }
+                        Err(_) => {
+                            // Will retry on next tick cycle
+                        }
+                    }
+                }
+
+                // Fleet health probes
+                if config.fleet.probe_enabled && fleet_prober.should_probe() {
+                    let hosts: Vec<(String, u16)> = app
+                        .hosts
+                        .iter()
+                        .map(|h| (h.hostname.clone(), h.port))
+                        .collect();
+                    if !hosts.is_empty() {
+                        fleet_prober.probe_all(&hosts).await;
+                        // Update host displays with probe results
+                        for host in app.hosts.iter_mut() {
+                            if let Some(state) =
+                                fleet_prober.get_state(&host.hostname, host.port)
+                            {
+                                if state.result.online {
+                                    host.status = HostStatus::Online;
+                                    host.latency_ms = state.result.latency_ms;
+                                } else {
+                                    host.status = HostStatus::Offline;
+                                    host.latency_ms = None;
+                                }
+                                host.latency_history = state.latency_history.clone();
+                            }
+                        }
+                    }
+                }
             }
             AppEvent::Resize(w, h) => {
                 // Forward PTY resize to all active sessions
@@ -676,6 +883,7 @@ async fn handle_key_event(
     audit: &AuditLogger,
     runtimes: &mut Vec<Option<SessionRuntime>>,
     output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
+    reconnect_trackers: &mut Vec<Option<ReconnectTracker>>,
 ) -> anyhow::Result<KeyAction> {
     // Help toggle — intercept before anything else
     if app.show_help {
@@ -766,6 +974,9 @@ async fn handle_key_event(
                     if idx < output_rxs.len() {
                         output_rxs.remove(idx);
                     }
+                    if idx < reconnect_trackers.len() {
+                        reconnect_trackers.remove(idx);
+                    }
                     app.session_manager.remove_session(idx);
                     app.remove_session_tracking(idx);
 
@@ -801,6 +1012,34 @@ async fn handle_dashboard_key(
     runtimes: &mut Vec<Option<SessionRuntime>>,
     output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
 ) -> anyhow::Result<KeyAction> {
+    // Search mode input handling
+    if app.search_active {
+        match key.code {
+            KeyCode::Esc => {
+                app.search_active = false;
+                app.search_query.clear();
+                app.select_first_filtered();
+            }
+            KeyCode::Enter => {
+                app.search_active = false;
+                // Connect to the currently selected (first matching) host
+                if let Some(host) = app.selected_host().cloned() {
+                    open_session(app, config, audit, &host, runtimes, output_rxs).await?;
+                }
+            }
+            KeyCode::Backspace => {
+                app.search_query.pop();
+                app.select_first_filtered();
+            }
+            KeyCode::Char(c) => {
+                app.search_query.push(c);
+                app.select_first_filtered();
+            }
+            _ => {}
+        }
+        return Ok(KeyAction::Handled);
+    }
+
     match key.code {
         KeyCode::Char('q') => return Ok(KeyAction::Quit),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -812,6 +1051,10 @@ async fn handle_dashboard_key(
         KeyCode::Char('2') => app.dashboard_tab = DashboardTab::Hosts,
         KeyCode::Char('3') => app.dashboard_tab = DashboardTab::Fleet,
         KeyCode::Char('4') => app.dashboard_tab = DashboardTab::Config,
+        KeyCode::Char('/') => {
+            app.search_active = true;
+            app.search_query.clear();
+        }
         KeyCode::Char('r') => {
             load_hosts_into_app(app, config)?;
             app.set_status("Hosts refreshed.".to_string());
@@ -907,8 +1150,10 @@ async fn open_session(
     let auth = if let Some(ref key) = config.general.default_key {
         let expanded = shellexpand::tilde(key).to_string();
         AuthMethod::KeyFile(expanded.into())
+    } else if std::env::var("SSH_AUTH_SOCK").is_ok() {
+        AuthMethod::Agent
     } else {
-        app.set_status("No key configured. Set general.default_key in config.".to_string());
+        app.set_status("No key or ssh-agent available. Set general.default_key in config.".to_string());
         return Ok(());
     };
 
@@ -1012,9 +1257,22 @@ async fn open_session(
             let (output_tx, output_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
             let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<SessionInput>(64);
 
+            // Session recording (asciicast v2)
+            let recorder: Option<std::sync::Arc<recording::SessionRecorder>> =
+                if config.session.recording {
+                    let cast_path = recording::recording_path(&session_id);
+                    match recording::SessionRecorder::new(&cast_path, cols as u32, rows as u32, Some(label.clone())) {
+                        Ok(r) => Some(std::sync::Arc::new(r)),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+
             // Spawn channel I/O task
             let diag_metrics = diag.metrics();
             let mut channel = channel;
+            let rec = recorder.clone();
             tokio::spawn(async move {
                 loop {
                     tokio::select! {
@@ -1022,6 +1280,9 @@ async fn open_session(
                             match msg {
                                 russh::ChannelMsg::Data { data } => {
                                     let bytes = data.to_vec();
+                                    if let Some(ref r) = rec {
+                                        r.record_output(&bytes);
+                                    }
                                     {
                                         let mut m = diag_metrics.write().await;
                                         m.bytes_received += bytes.len() as u64;
@@ -1038,6 +1299,9 @@ async fn open_session(
                         Some(input) = input_rx.recv() => {
                             match input {
                                 SessionInput::Data(data) => {
+                                    if let Some(ref r) = rec {
+                                        r.record_input(&data);
+                                    }
                                     {
                                         let mut m = diag_metrics.write().await;
                                         m.bytes_sent += data.len() as u64;
@@ -1071,12 +1335,20 @@ async fn open_session(
                 session.state = SessionState::Active;
             }
 
+            audit.log_session_event(
+                &session_id,
+                &connect_config.hostname,
+                connect_config.port,
+                AuditEventType::SessionStart,
+            );
+
             // Store runtime
             let runtime = SessionRuntime {
                 ssh_session,
                 channel_tx: input_tx,
                 diagnostics: diag,
                 monitor,
+                connect_config,
             };
 
             // Ensure vectors are large enough
@@ -1088,13 +1360,6 @@ async fn open_session(
             }
             runtimes[idx] = Some(runtime);
             output_rxs[idx] = Some(output_rx);
-
-            audit.log_session_event(
-                &session_id,
-                &connect_config.hostname,
-                connect_config.port,
-                AuditEventType::SessionStart,
-            );
 
             app.set_status(format!("Connected to {}", label));
         }
@@ -1108,6 +1373,249 @@ async fn open_session(
         }
     }
 
+    Ok(())
+}
+
+/// Reconnect a session at the given index, replacing its runtime and output channel.
+/// The session's VirtualTerminal (scrollback) is preserved.
+async fn reconnect_session(
+    idx: usize,
+    connect_config: &ConnectConfig,
+    config: &AppConfig,
+    runtimes: &mut Vec<Option<SessionRuntime>>,
+    output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
+) -> anyhow::Result<()> {
+    // Close old SSH session if still present
+    if let Some(Some(rt)) = runtimes.get_mut(idx) {
+        rt.ssh_session.close().await.ok();
+    }
+
+    // Connect
+    let (mut ssh_session, _fingerprint, banner) = SshClient::connect(connect_config).await?;
+
+    // Diagnostics
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let log_dir = AppConfig::data_dir().join("sessions");
+    let diag = DiagnosticsEngine::new(
+        &session_id,
+        &connect_config.hostname,
+        connect_config.port,
+        Some(log_dir.as_path()),
+    );
+    diag.set_connection_info(
+        banner,
+        None,
+        None,
+        None,
+        None,
+        Some(format!("{:?}", connect_config.auth)),
+    )
+    .await;
+
+    // Open shell channel
+    let (cols, rows) = terminal::size()?;
+    let channel = ssh_session
+        .open_shell("xterm-256color", cols as u32, rows as u32)
+        .await?;
+
+    // Set up channel I/O
+    let (output_tx, output_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<SessionInput>(64);
+
+    // Recording for reconnected sessions
+    let rec: Option<std::sync::Arc<recording::SessionRecorder>> = if config.session.recording {
+        let cast_path = recording::recording_path(&session_id);
+        recording::SessionRecorder::new(&cast_path, cols as u32, rows as u32, None)
+            .ok()
+            .map(std::sync::Arc::new)
+    } else {
+        None
+    };
+
+    let diag_metrics = diag.metrics();
+    let mut channel = channel;
+    let rec_clone = rec.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Some(msg) = channel.wait() => {
+                    match msg {
+                        russh::ChannelMsg::Data { data } => {
+                            let bytes = data.to_vec();
+                            if let Some(ref r) = rec_clone {
+                                r.record_output(&bytes);
+                            }
+                            {
+                                let mut m = diag_metrics.write().await;
+                                m.bytes_received += bytes.len() as u64;
+                            }
+                            if output_tx.send(bytes).await.is_err() {
+                                break;
+                            }
+                        }
+                        russh::ChannelMsg::Eof | russh::ChannelMsg::Close => break,
+                        russh::ChannelMsg::ExitStatus { .. } => break,
+                        _ => {}
+                    }
+                }
+                Some(input) = input_rx.recv() => {
+                    match input {
+                        SessionInput::Data(data) => {
+                            if let Some(ref r) = rec_clone {
+                                r.record_input(&data);
+                            }
+                            {
+                                let mut m = diag_metrics.write().await;
+                                m.bytes_sent += data.len() as u64;
+                            }
+                            if channel.data(&data[..]).await.is_err() {
+                                break;
+                            }
+                        }
+                        SessionInput::Resize { cols, rows } => {
+                            channel.window_change(cols, rows, 0, 0).await.ok();
+                        }
+                    }
+                }
+                else => break,
+            }
+        }
+    });
+
+    // Monitor
+    let monitor = if config.host_monitor.enabled {
+        Some(monitor::HostMetricsCollector::new(
+            config.host_monitor.history_samples,
+            config.host_monitor.process_count,
+        ))
+    } else {
+        None
+    };
+
+    let runtime = SessionRuntime {
+        ssh_session,
+        channel_tx: input_tx,
+        diagnostics: diag,
+        monitor,
+        connect_config: connect_config.clone(),
+    };
+
+    while runtimes.len() <= idx {
+        runtimes.push(None);
+    }
+    while output_rxs.len() <= idx {
+        output_rxs.push(None);
+    }
+    runtimes[idx] = Some(runtime);
+    output_rxs[idx] = Some(output_rx);
+
+    Ok(())
+}
+
+/// Replay an asciicast recording with accurate timing.
+/// Supports: Space = pause/resume, +/- = speed, q = quit.
+async fn replay_recording(path: &std::path::Path) -> anyhow::Result<()> {
+    let (header, events) = recording::parse_cast_file(path)?;
+
+    if events.is_empty() {
+        println!("Recording is empty.");
+        return Ok(());
+    }
+
+    // Only replay output events
+    let output_events: Vec<&recording::CastEvent> = events
+        .iter()
+        .filter(|e| e.event_type == "o")
+        .collect();
+
+    if output_events.is_empty() {
+        println!("No output events in recording.");
+        return Ok(());
+    }
+
+    println!(
+        "Replaying session ({}x{}) — {} events. Space:pause  +/-:speed  q:quit",
+        header.width,
+        header.height,
+        output_events.len()
+    );
+
+    // Use raw mode for clean output
+    terminal::enable_raw_mode()?;
+    let _raw_guard = scopeguard::guard((), |_| {
+        terminal::disable_raw_mode().ok();
+    });
+
+    let mut speed: f64 = 1.0;
+    let mut paused = false;
+
+    for (i, event) in output_events.iter().enumerate() {
+        // Calculate delay from previous event
+        let delay = if i == 0 {
+            0.0
+        } else {
+            (event.time - output_events[i - 1].time) / speed
+        };
+
+        // Cap delay to 2 seconds (avoid long pauses from idle sessions)
+        let delay = delay.min(2.0);
+
+        if delay > 0.001 {
+            let delay_dur = Duration::from_secs_f64(delay);
+            let mut remaining = delay_dur;
+
+            while !remaining.is_zero() {
+                let poll_time = remaining.min(Duration::from_millis(50));
+                if crossterm::event::poll(poll_time).unwrap_or(false) {
+                    if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
+                        match key.code {
+                            KeyCode::Char('q') => {
+                                io::stdout().write_all(b"\r\n")?;
+                                io::stdout().flush()?;
+                                return Ok(());
+                            }
+                            KeyCode::Char(' ') => {
+                                paused = !paused;
+                                if paused {
+                                    // Wait until unpaused
+                                    loop {
+                                        if let Ok(crossterm::event::Event::Key(k)) =
+                                            crossterm::event::read()
+                                        {
+                                            match k.code {
+                                                KeyCode::Char(' ') => break,
+                                                KeyCode::Char('q') => {
+                                                    io::stdout().write_all(b"\r\n")?;
+                                                    io::stdout().flush()?;
+                                                    return Ok(());
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('+') | KeyCode::Char('=') => {
+                                speed = (speed * 2.0).min(16.0);
+                            }
+                            KeyCode::Char('-') => {
+                                speed = (speed / 2.0).max(0.25);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                remaining = remaining.saturating_sub(poll_time);
+            }
+        }
+
+        // Write event data
+        io::stdout().write_all(event.data.as_bytes())?;
+        io::stdout().flush()?;
+    }
+
+    io::stdout().write_all(b"\r\n")?;
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -1352,6 +1860,8 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                     status: HostStatus::Unknown,
                     last_seen: h.last_seen,
                     tags: tags.join(", "),
+                    latency_ms: None,
+                    latency_history: Vec::new(),
                 });
             }
         }
@@ -1375,6 +1885,8 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                 status: HostStatus::Unknown,
                 last_seen: String::new(),
                 tags: tags.join(", "),
+                latency_ms: None,
+                latency_history: Vec::new(),
             });
         }
     }
@@ -1541,8 +2053,10 @@ async fn run_on_group(
     {
         let expanded = shellexpand::tilde(key).to_string();
         AuthMethod::KeyFile(expanded.into())
+    } else if std::env::var("SSH_AUTH_SOCK").is_ok() {
+        AuthMethod::Agent
     } else {
-        anyhow::bail!("No key configured for group. Set defaults.key or general.default_key.");
+        anyhow::bail!("No key configured for group and no ssh-agent available.");
     };
 
     let mut handles = Vec::new();
@@ -1597,4 +2111,54 @@ async fn run_on_group(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reconnect_tracker_initial_state() {
+        let tracker = ReconnectTracker::new(5);
+        assert_eq!(tracker.attempt, 0);
+        assert_eq!(tracker.max_retries, 5);
+        assert!(!tracker.exhausted());
+        // Should retry immediately (backoff_secs = 0)
+        assert!(tracker.should_retry());
+    }
+
+    #[test]
+    fn test_reconnect_tracker_backoff() {
+        let mut tracker = ReconnectTracker::new(5);
+        tracker.record_attempt(); // attempt 1
+        assert_eq!(tracker.attempt, 1);
+        assert_eq!(tracker.backoff_secs, 2); // 1 << 1 = 2
+        tracker.record_attempt(); // attempt 2
+        assert_eq!(tracker.backoff_secs, 4); // 1 << 2 = 4
+        tracker.record_attempt(); // attempt 3
+        assert_eq!(tracker.backoff_secs, 8); // 1 << 3 = 8
+        tracker.record_attempt(); // attempt 4
+        assert_eq!(tracker.backoff_secs, 16); // 1 << 4 = 16
+        tracker.record_attempt(); // attempt 5
+        assert_eq!(tracker.backoff_secs, 30); // 1 << 5 = 32, capped to 30
+    }
+
+    #[test]
+    fn test_reconnect_tracker_exhausted() {
+        let mut tracker = ReconnectTracker::new(3);
+        tracker.record_attempt(); // 1
+        tracker.record_attempt(); // 2
+        tracker.record_attempt(); // 3
+        assert!(!tracker.exhausted());
+        tracker.record_attempt(); // 4 > max
+        assert!(tracker.exhausted());
+    }
+
+    #[test]
+    fn test_reconnect_tracker_should_retry_respects_backoff() {
+        let mut tracker = ReconnectTracker::new(5);
+        tracker.record_attempt(); // sets backoff_secs > 0
+        // Immediately after attempt, should NOT be ready (backoff not elapsed)
+        assert!(!tracker.should_retry());
+    }
 }

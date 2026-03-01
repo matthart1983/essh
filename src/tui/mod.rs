@@ -23,6 +23,8 @@ pub struct HostDisplay {
     pub status: HostStatus,
     pub last_seen: String,
     pub tags: String,
+    pub latency_ms: Option<f64>,
+    pub latency_history: Vec<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +60,9 @@ pub struct App {
     pub monitor_sort: host_monitor::ProcessSort,
     pub monitor_process_scroll: usize,
     pub show_help: bool,
+    // Host search/filter
+    pub search_active: bool,
+    pub search_query: String,
     // Per-session diagnostics snapshots (indexed by session manager index)
     pub session_diagnostics: Vec<Option<DiagnosticsSnapshot>>,
     // Per-session host metrics (indexed by session manager index)
@@ -81,6 +86,8 @@ impl App {
             monitor_sort: host_monitor::ProcessSort::Cpu,
             monitor_process_scroll: 0,
             show_help: false,
+            search_active: false,
+            search_query: String::new(),
             session_diagnostics: Vec::new(),
             session_metrics: Vec::new(),
             session_cpu_history: Vec::new(),
@@ -102,28 +109,66 @@ impl App {
         }
     }
 
+    /// Returns indices of hosts matching the current search query.
+    pub fn filtered_host_indices(&self) -> Vec<usize> {
+        if self.search_query.is_empty() {
+            return (0..self.hosts.len()).collect();
+        }
+        let q = self.search_query.to_lowercase();
+        self.hosts
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| {
+                h.name.to_lowercase().contains(&q)
+                    || h.hostname.to_lowercase().contains(&q)
+                    || h.tags.to_lowercase().contains(&q)
+                    || h.user.to_lowercase().contains(&q)
+                    || format!("{:?}", h.status).to_lowercase().contains(&q)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     pub fn selected_host(&self) -> Option<&HostDisplay> {
         self.hosts.get(self.selected_host)
     }
 
     pub fn next_host(&mut self) {
-        if self.hosts.is_empty() {
+        let indices = self.filtered_host_indices();
+        if indices.is_empty() {
             return;
         }
-        self.selected_host = (self.selected_host + 1) % self.hosts.len();
+        let current_pos = indices.iter().position(|&i| i == self.selected_host);
+        let next = match current_pos {
+            Some(pos) => indices[(pos + 1) % indices.len()],
+            None => indices[0],
+        };
+        self.selected_host = next;
         self.table_state.select(Some(self.selected_host));
     }
 
     pub fn prev_host(&mut self) {
-        if self.hosts.is_empty() {
+        let indices = self.filtered_host_indices();
+        if indices.is_empty() {
             return;
         }
-        if self.selected_host == 0 {
-            self.selected_host = self.hosts.len() - 1;
-        } else {
-            self.selected_host -= 1;
-        }
+        let current_pos = indices.iter().position(|&i| i == self.selected_host);
+        let prev = match current_pos {
+            Some(0) => indices[indices.len() - 1],
+            Some(pos) => indices[pos - 1],
+            None => indices[0],
+        };
+        self.selected_host = prev;
         self.table_state.select(Some(self.selected_host));
+    }
+
+    /// Reset selection to the first filtered host (used when search query changes).
+    pub fn select_first_filtered(&mut self) {
+        let indices = self.filtered_host_indices();
+        if let Some(&first) = indices.first() {
+            self.selected_host = first;
+            self.table_state.select(Some(first));
+        }
     }
 
     pub fn set_status(&mut self, msg: String) {
@@ -154,15 +199,19 @@ impl App {
 pub fn render(frame: &mut Frame, app: &mut App) {
     match app.view {
         AppView::Dashboard => {
+            let filtered_indices = app.filtered_host_indices();
             dashboard::render(
                 frame,
                 frame.area(),
                 &app.session_manager.sessions,
                 &app.hosts,
+                &filtered_indices,
                 app.selected_host,
                 &mut app.table_state,
                 app.dashboard_tab,
                 app.status_message.as_deref(),
+                app.search_active,
+                &app.search_query,
             );
         }
         AppView::Session => {
@@ -254,5 +303,113 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Help overlay (rendered on top of any view)
     if app.show_help {
         help::render(frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_host(name: &str, hostname: &str, tags: &str) -> HostDisplay {
+        HostDisplay {
+            name: name.to_string(),
+            hostname: hostname.to_string(),
+            port: 22,
+            user: "root".to_string(),
+            status: HostStatus::Unknown,
+            last_seen: String::new(),
+            tags: tags.to_string(),
+            latency_ms: None,
+            latency_history: Vec::new(),
+        }
+    }
+
+    fn sample_app() -> App {
+        let mut app = App::new(10);
+        app.set_hosts(vec![
+            make_host("web-prod-1", "10.0.1.1", "env=prod,role=web"),
+            make_host("web-prod-2", "10.0.1.2", "env=prod,role=web"),
+            make_host("db-staging", "10.0.2.1", "env=staging,role=db"),
+            make_host("cache-prod", "10.0.1.10", "env=prod,role=cache"),
+        ]);
+        app
+    }
+
+    #[test]
+    fn test_filter_no_query_returns_all() {
+        let app = sample_app();
+        assert_eq!(app.filtered_host_indices(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_filter_by_name() {
+        let mut app = sample_app();
+        app.search_query = "web".to_string();
+        assert_eq!(app.filtered_host_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn test_filter_by_hostname() {
+        let mut app = sample_app();
+        app.search_query = "10.0.2".to_string();
+        assert_eq!(app.filtered_host_indices(), vec![2]);
+    }
+
+    #[test]
+    fn test_filter_by_tag() {
+        let mut app = sample_app();
+        app.search_query = "staging".to_string();
+        assert_eq!(app.filtered_host_indices(), vec![2]);
+    }
+
+    #[test]
+    fn test_filter_case_insensitive() {
+        let mut app = sample_app();
+        app.search_query = "WEB".to_string();
+        assert_eq!(app.filtered_host_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn test_filter_no_match() {
+        let mut app = sample_app();
+        app.search_query = "nonexistent".to_string();
+        assert!(app.filtered_host_indices().is_empty());
+    }
+
+    #[test]
+    fn test_select_first_filtered() {
+        let mut app = sample_app();
+        app.search_query = "db".to_string();
+        app.select_first_filtered();
+        assert_eq!(app.selected_host, 2);
+    }
+
+    #[test]
+    fn test_next_host_wraps_within_filter() {
+        let mut app = sample_app();
+        app.search_query = "web".to_string();
+        app.selected_host = 0;
+        app.next_host();
+        assert_eq!(app.selected_host, 1);
+        app.next_host();
+        assert_eq!(app.selected_host, 0); // wraps back
+    }
+
+    #[test]
+    fn test_prev_host_wraps_within_filter() {
+        let mut app = sample_app();
+        app.search_query = "web".to_string();
+        app.selected_host = 0;
+        app.prev_host();
+        assert_eq!(app.selected_host, 1); // wraps to last
+    }
+
+    #[test]
+    fn test_search_clear_restores_all() {
+        let mut app = sample_app();
+        app.search_query = "web".to_string();
+        assert_eq!(app.filtered_host_indices().len(), 2);
+        app.search_query.clear();
+        assert_eq!(app.filtered_host_indices().len(), 4);
     }
 }

@@ -15,17 +15,31 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, sessions: &[Session], active_in
     ];
 
     for (i, session) in sessions.iter().enumerate() {
-        let label = format!("[{}] {} ", i + 1, session.label);
-        if i == active_index {
-            spans.push(Span::styled(label, Style::default().fg(Color::Yellow).bold()));
-        } else if session.has_new_output {
-            spans.push(Span::styled(label, Style::default().fg(Color::Cyan).underlined()));
-        } else if matches!(session.state, SessionState::Reconnecting { .. }) {
-            spans.push(Span::styled(label, Style::default().fg(Color::Red)));
-        } else if matches!(session.state, SessionState::Suspended) {
-            spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
+        if let SessionState::Reconnecting { attempt, max } = &session.state {
+            let label = format!("[{}] {} ● Recon. {}/{} ", i + 1, session.label, attempt, max);
+            if i == active_index {
+                spans.push(Span::styled(label, Style::default().fg(Color::Red).bold()));
+            } else {
+                spans.push(Span::styled(label, Style::default().fg(Color::Red)));
+            }
+        } else if let SessionState::Disconnected { .. } = &session.state {
+            let label = format!("[{}] {} ● Disconn. ", i + 1, session.label);
+            if i == active_index {
+                spans.push(Span::styled(label, Style::default().fg(Color::Red).bold()));
+            } else {
+                spans.push(Span::styled(label, Style::default().fg(Color::Red)));
+            }
         } else {
-            spans.push(Span::raw(label));
+            let label = format!("[{}] {} ", i + 1, session.label);
+            if i == active_index {
+                spans.push(Span::styled(label, Style::default().fg(Color::Yellow).bold()));
+            } else if session.has_new_output {
+                spans.push(Span::styled(label, Style::default().fg(Color::Cyan).underlined()));
+            } else if matches!(session.state, SessionState::Suspended) {
+                spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
+            } else {
+                spans.push(Span::raw(label));
+            }
         }
         spans.push(Span::raw(" "));
     }

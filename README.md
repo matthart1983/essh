@@ -29,12 +29,16 @@
 
 | Feature | Description |
 |---|---|
-| **Pure-Rust SSH** | Built on [russh](https://github.com/warp-tech/russh) — no libssh/OpenSSH dependency. Public key & password auth, TOFU host key verification. |
+| **Pure-Rust SSH** | Built on [russh](https://github.com/warp-tech/russh) — no libssh/OpenSSH dependency. Public key, password, & SSH agent auth with TOFU host key verification. |
 | **Concurrent Sessions** | Up to 9 simultaneous SSH sessions with instant `Alt+1-9` switching, `Alt+←/→` cycling, and `Alt+Tab` last-used recall. |
 | **Virtual Terminal** | Full ANSI escape sequence rendering via `vt100::Parser` — colors, cursor positioning, and alternate screen all work correctly. |
 | **Host Monitor** | Real-time remote htop: CPU sparklines, memory bars, disk usage, network I/O, and top processes — all collected over SSH exec channels (no agent required). |
 | **Connection Diagnostics** | Live RTT, throughput (↑/↓), packet loss, and a 5-tier connection quality score per session. JSONL diagnostic logs for replay. |
-| **Fleet Management** | Tag-based host groups, bulk command execution with parallel fan-out, health checks, and SSH config import. |
+| **Fleet Management** | Tag-based host groups, bulk command execution with parallel fan-out, and SSH config import. |
+| **Live Fleet Health** | Background TCP probes with per-host latency sparklines and colour-coded status (green/yellow/red). Configurable probe interval. |
+| **Host Search & Filter** | Press `/` to live-filter hosts by name, hostname, tags, or status. Navigate filtered results with `↑`/`↓`. |
+| **Auto-Reconnect** | Exponential backoff reconnection on disconnect (2s → 30s cap). Scrollback preserved across reconnects. Tab bar shows `● Recon. 2/5`. |
+| **Session Recording** | Record terminal I/O to asciicast v2 files. Replay with `essh session replay <id>` — pause, speed control (0.25×–16×), and quit. |
 | **Audit Logging** | Structured JSON audit trail — connection attempts, auth results, host key events, session lifecycle. |
 | **TUI Dashboard** | 4-tab dashboard (Sessions, Hosts, Fleet, Config) with a Netwatch-inspired Cyan/Yellow/DarkGray aesthetic. |
 
@@ -199,7 +203,13 @@ auto_reconnect = true
 reconnect_max_retries = 5
 max_concurrent = 9
 scrollback_lines = 10000
-recording = false
+recording = false            # Set true to record sessions as asciicast v2
+
+[fleet]
+probe_enabled = true
+probe_interval = 60          # Seconds between TCP health probes
+probe_timeout = 5            # Seconds before probe timeout
+latency_history_samples = 30 # Sparkline data points per host
 
 [security]
 min_key_bits = 3072
@@ -286,7 +296,7 @@ key = "~/.ssh/deploy_key"
 | `j` / `k` / `↑` / `↓` | Navigate host list |
 | `Enter` | Connect to selected host |
 | `a` | Add host |
-| `/` | Search |
+| `/` | Live search/filter hosts |
 | `r` | Refresh host list |
 | `d` | Delete selected host |
 | `q` / `Ctrl+c` | Quit |
@@ -333,7 +343,8 @@ essh keys add <path> [-n name]        Add a private key
 essh keys remove <name>               Remove a key
 
 essh session list                     List session recordings
-essh session replay <id>              Replay diagnostics
+essh session replay <id>              Replay recorded session (asciicast)
+                                        Space:pause  +/-:speed  q:quit
 
 essh diag <session_id>                Show session diagnostics
 
@@ -375,17 +386,19 @@ essh audit tail [-l lines]            Show recent audit entries
 
 ```
 src/
-├── main.rs              # Entry point, TUI event loop, CLI dispatch
+├── main.rs              # Entry point, TUI event loop, CLI dispatch, auto-reconnect
 ├── cli/                 # Clap command definitions
-├── config/              # TOML config parsing & defaults
-├── ssh/                 # russh client, auth, host key verification
+├── config/              # TOML config parsing & defaults (incl. [fleet] section)
+├── ssh/                 # russh client, auth (key/password/agent), host key verification
 ├── session/             # Session state, VirtualTerminal (vt100), SessionManager
 ├── tui/                 # TUI views
-│   ├── dashboard.rs     # Dashboard with 4 tabs
+│   ├── dashboard.rs     # Dashboard with 4 tabs, host search/filter bar
 │   ├── session_view.rs  # Terminal renderer, tab bar, status bar
 │   ├── host_monitor.rs  # CPU/MEM/Disk/Net/Process panels
 │   ├── help.rs          # Help overlay popup
 │   └── widgets.rs       # Sparklines, bar gauges, formatters
+├── fleet/               # Live fleet health — background TCP probes, latency tracking
+├── recording/           # Session recording (asciicast v2) & replay
 ├── monitor/             # Remote host metric collection
 │   ├── collector.rs     # SSH exec-based metric gathering
 │   ├── parser.rs        # /proc & command output parsing
@@ -413,7 +426,7 @@ Contributions are welcome! Please:
 ```bash
 cargo build              # Debug build
 cargo build --release    # Release build
-cargo test               # Run all tests (~65 tests)
+cargo test               # Run all tests (94 tests)
 cargo clippy             # Lint checks
 cargo fmt --check        # Format check
 ```

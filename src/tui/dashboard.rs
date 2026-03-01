@@ -11,17 +11,21 @@ pub fn render(
     area: Rect,
     sessions: &[Session],
     hosts: &[super::HostDisplay],
+    filtered_indices: &[usize],
     selected_host: usize,
     table_state: &mut TableState,
     active_tab: super::DashboardTab,
     status_message: Option<&str>,
+    search_active: bool,
+    search_query: &str,
 ) {
+    let footer_height = if search_active { 4 } else { 3 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),  // header + tab bar
             Constraint::Min(8),    // main content
-            Constraint::Length(3), // footer
+            Constraint::Length(footer_height), // footer (+ search bar)
         ])
         .split(area);
 
@@ -29,12 +33,12 @@ pub fn render(
 
     match active_tab {
         super::DashboardTab::Sessions => render_sessions_tab(f, chunks[1], sessions),
-        super::DashboardTab::Hosts => render_hosts_tab(f, chunks[1], hosts, selected_host, table_state),
+        super::DashboardTab::Hosts => render_hosts_tab(f, chunks[1], hosts, filtered_indices, selected_host, table_state),
         super::DashboardTab::Fleet => render_fleet_tab(f, chunks[1], hosts, sessions),
         super::DashboardTab::Config => render_config_tab(f, chunks[1]),
     }
 
-    render_footer(f, chunks[2], active_tab, status_message);
+    render_footer(f, chunks[2], active_tab, status_message, search_active, search_query);
 }
 
 fn render_header(f: &mut Frame, area: Rect, active_tab: super::DashboardTab) {
@@ -137,7 +141,14 @@ fn render_sessions_tab(f: &mut Frame, area: Rect, sessions: &[Session]) {
     f.render_widget(table, area);
 }
 
-fn render_hosts_tab(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], selected: usize, table_state: &mut TableState) {
+fn render_hosts_tab(
+    f: &mut Frame,
+    area: Rect,
+    hosts: &[super::HostDisplay],
+    filtered_indices: &[usize],
+    selected: usize,
+    _table_state: &mut TableState,
+) {
     let header = Row::new(vec![
         Cell::from("Name").style(Style::default().fg(Color::Cyan).bold()),
         Cell::from("Hostname").style(Style::default().fg(Color::Cyan).bold()),
@@ -148,7 +159,18 @@ fn render_hosts_tab(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], sel
         Cell::from("Tags").style(Style::default().fg(Color::Cyan).bold()),
     ]).height(1);
 
-    let rows: Vec<Row> = hosts.iter().map(|h| {
+    // Build rows from filtered indices only
+    let filtered_hosts: Vec<&super::HostDisplay> = filtered_indices
+        .iter()
+        .filter_map(|&i| hosts.get(i))
+        .collect();
+
+    // Determine which row in the filtered list is selected
+    let selected_row = filtered_indices.iter().position(|&i| i == selected);
+    let mut filtered_table_state = TableState::default();
+    filtered_table_state.select(selected_row);
+
+    let rows: Vec<Row> = filtered_hosts.iter().map(|h| {
         let status_cell = match h.status {
             super::HostStatus::Online => Cell::from("● Online").style(Style::default().fg(Color::Green)),
             super::HostStatus::Offline => Cell::from("● Offline").style(Style::default().fg(Color::Red)),
@@ -175,13 +197,17 @@ fn render_hosts_tab(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], sel
         Constraint::Percentage(18),
     ];
 
-    let title = format!("Hosts ({})", hosts.len());
+    let title = if filtered_hosts.len() == hosts.len() {
+        format!("Hosts ({})", hosts.len())
+    } else {
+        format!("Hosts ({}/{})", filtered_hosts.len(), hosts.len())
+    };
     let table = Table::new(rows, widths)
         .header(header)
         .block(Block::bordered().title(title).border_style(Style::default().fg(Color::DarkGray)))
         .row_highlight_style(Style::default().bg(Color::DarkGray).bold())
         .highlight_symbol(">> ");
-    f.render_stateful_widget(table, area, table_state);
+    f.render_stateful_widget(table, area, &mut filtered_table_state);
 }
 
 fn render_fleet_tab(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], sessions: &[Session]) {
@@ -189,7 +215,7 @@ fn render_fleet_tab(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], ses
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(5),  // fleet health summary
-            Constraint::Min(4),    // recent connections (placeholder)
+            Constraint::Min(4),    // per-host status table
         ])
         .split(area);
 
@@ -199,8 +225,18 @@ fn render_fleet_tab(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], ses
     let unknown = hosts.iter().filter(|h| matches!(h.status, super::HostStatus::Unknown)).count();
     let total = hosts.len();
     let pct = if total > 0 { (online as f64 / total as f64) * 100.0 } else { 0.0 };
+    let active_sessions = sessions.iter().filter(|s| matches!(s.state, SessionState::Active)).count();
 
     let bar = widgets::bar_gauge(pct, 40);
+    let bar_color = if pct >= 80.0 {
+        Color::Green
+    } else if pct >= 50.0 {
+        Color::Yellow
+    } else if total > 0 {
+        Color::Red
+    } else {
+        Color::DarkGray
+    };
 
     let summary = Paragraph::new(vec![
         Line::from(vec![
@@ -215,27 +251,85 @@ fn render_fleet_tab(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], ses
             Span::raw("  │  "),
             Span::styled("Total: ", Style::default().fg(Color::DarkGray)),
             Span::raw(format!("{}", total)),
+            Span::raw("  │  "),
+            Span::styled("Sessions: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{}", active_sessions), Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(bar, Style::default().fg(Color::Green)),
+            Span::styled(bar, Style::default().fg(bar_color)),
             Span::raw(format!(" {:.0}%", pct)),
         ]),
     ])
     .block(Block::bordered().title("Fleet Health").border_style(Style::default().fg(Color::DarkGray)));
     f.render_widget(summary, chunks[0]);
 
-    // Active sessions summary
-    let active = sessions.iter().filter(|s| matches!(s.state, SessionState::Active)).count();
-    let session_info = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("  Active sessions: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}", active), Style::default().fg(Color::Green)),
-            Span::raw(format!("  │  Total sessions: {}", sessions.len())),
-        ]),
-    ])
-    .block(Block::bordered().title("Sessions").border_style(Style::default().fg(Color::DarkGray)));
-    f.render_widget(session_info, chunks[1]);
+    // Per-host status table with latency sparklines
+    let header = Row::new(vec![
+        Cell::from("Host").style(Style::default().fg(Color::Cyan).bold()),
+        Cell::from("Port").style(Style::default().fg(Color::Cyan).bold()),
+        Cell::from("Status").style(Style::default().fg(Color::Cyan).bold()),
+        Cell::from("Latency").style(Style::default().fg(Color::Cyan).bold()),
+        Cell::from("History").style(Style::default().fg(Color::Cyan).bold()),
+    ]).height(1);
+
+    let rows: Vec<Row> = hosts.iter().map(|h| {
+        let (status_text, status_style) = match h.status {
+            super::HostStatus::Online => ("● Online", Style::default().fg(Color::Green)),
+            super::HostStatus::Offline => ("● Offline", Style::default().fg(Color::Red)),
+            super::HostStatus::Unknown => ("○ Probing…", Style::default().fg(Color::DarkGray)),
+        };
+
+        let latency_cell = match h.latency_ms {
+            Some(ms) => {
+                let color = latency_threshold_color(ms);
+                Cell::from(format!("{:.0}ms", ms)).style(Style::default().fg(color))
+            }
+            None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+        };
+
+        let sparkline = if h.latency_history.is_empty() {
+            "                ".to_string()
+        } else {
+            widgets::sparkline_string(&h.latency_history, 16)
+        };
+        let spark_color = match h.latency_ms {
+            Some(ms) => latency_threshold_color(ms),
+            None => Color::DarkGray,
+        };
+
+        Row::new([
+            Cell::from(if h.name.is_empty() { h.hostname.clone() } else { h.name.clone() }),
+            Cell::from(h.port.to_string()),
+            Cell::from(status_text).style(status_style),
+            latency_cell,
+            Cell::from(sparkline).style(Style::default().fg(spark_color)),
+        ])
+    }).collect();
+
+    let widths = [
+        Constraint::Percentage(30),
+        Constraint::Percentage(8),
+        Constraint::Percentage(14),
+        Constraint::Percentage(12),
+        Constraint::Percentage(36),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(Block::bordered().title("Host Status").border_style(Style::default().fg(Color::DarkGray)));
+    f.render_widget(table, chunks[1]);
+}
+
+/// Netwatch latency thresholds: green < 50ms, yellow < 200ms, red ≥ 200ms
+fn latency_threshold_color(ms: f64) -> Color {
+    if ms < 50.0 {
+        Color::Green
+    } else if ms < 200.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    }
 }
 
 fn render_config_tab(f: &mut Frame, area: Rect) {
@@ -253,8 +347,29 @@ fn render_config_tab(f: &mut Frame, area: Rect) {
     f.render_widget(content, area);
 }
 
-fn render_footer(f: &mut Frame, area: Rect, tab: super::DashboardTab, status: Option<&str>) {
-    let mut lines = vec![Line::from(vec![
+fn render_footer(
+    f: &mut Frame,
+    area: Rect,
+    _tab: super::DashboardTab,
+    status: Option<&str>,
+    search_active: bool,
+    search_query: &str,
+) {
+    let mut lines = Vec::new();
+
+    if search_active {
+        lines.push(Line::from(vec![
+            Span::styled(" /", Style::default().fg(Color::Cyan).bold()),
+            Span::styled(search_query, Style::default().fg(Color::Yellow)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+            Span::styled("  Esc", Style::default().fg(Color::DarkGray)),
+            Span::styled(":Cancel  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Enter", Style::default().fg(Color::DarkGray)),
+            Span::styled(":Connect", Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    lines.push(Line::from(vec![
         Span::styled("Enter", Style::default().fg(Color::Cyan)),
         Span::raw(":Connect  "),
         Span::styled("Alt+1-9", Style::default().fg(Color::Cyan)),
@@ -269,7 +384,7 @@ fn render_footer(f: &mut Frame, area: Rect, tab: super::DashboardTab, status: Op
         Span::raw(":Delete  "),
         Span::styled("q", Style::default().fg(Color::Cyan)),
         Span::raw(":Quit"),
-    ])];
+    ]));
 
     if let Some(msg) = status {
         lines.push(Line::from(Span::styled(msg.to_string(), Style::default().fg(Color::Yellow))));

@@ -193,6 +193,26 @@ impl Default for HostMonitorConfig {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FleetConfig {
+    pub probe_enabled: bool,
+    pub probe_interval: u64,
+    pub probe_timeout: u64,
+    pub latency_history_samples: usize,
+}
+
+impl Default for FleetConfig {
+    fn default() -> Self {
+        Self {
+            probe_enabled: true,
+            probe_interval: 60,
+            probe_timeout: 5,
+            latency_history_samples: 30,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Host / group structs
 // ---------------------------------------------------------------------------
@@ -245,6 +265,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub host_monitor: HostMonitorConfig,
     #[serde(default)]
+    pub fleet: FleetConfig,
+    #[serde(default)]
     pub hosts: Vec<HostEntry>,
     #[serde(default)]
     pub host_groups: Vec<HostGroup>,
@@ -259,6 +281,7 @@ impl Default for AppConfig {
             security: SecurityConfig::default(),
             audit: AuditConfig::default(),
             host_monitor: HostMonitorConfig::default(),
+            fleet: FleetConfig::default(),
             hosts: Vec::new(),
             host_groups: Vec::new(),
         }
@@ -463,6 +486,31 @@ mod tests {
         assert_eq!(cfg.host_monitor.history_samples, 60);
         assert_eq!(cfg.session.max_concurrent, 9);
         assert_eq!(cfg.session.scrollback_lines, 10000);
+    }
+
+    #[test]
+    fn test_fleet_config_defaults() {
+        let cfg = AppConfig::default();
+        assert!(cfg.fleet.probe_enabled);
+        assert_eq!(cfg.fleet.probe_interval, 60);
+        assert_eq!(cfg.fleet.probe_timeout, 5);
+        assert_eq!(cfg.fleet.latency_history_samples, 30);
+    }
+
+    #[test]
+    fn test_fleet_config_parse() {
+        let toml_str = r#"
+            [fleet]
+            probe_enabled = false
+            probe_interval = 120
+            probe_timeout = 10
+            latency_history_samples = 50
+        "#;
+        let cfg: AppConfig = toml::from_str(toml_str).expect("parse fleet config");
+        assert!(!cfg.fleet.probe_enabled);
+        assert_eq!(cfg.fleet.probe_interval, 120);
+        assert_eq!(cfg.fleet.probe_timeout, 10);
+        assert_eq!(cfg.fleet.latency_history_samples, 50);
     }
 
     #[test]

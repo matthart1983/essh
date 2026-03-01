@@ -618,10 +618,54 @@ essh/
 
 ---
 
-## 13. Open Questions
+## 13. Planned Enhancements
+
+### 13.1 SSH Agent Forwarding
+
+Wire up the existing `AuthMethod::Agent` variant to discover keys from the local `ssh-agent` via `SSH_AUTH_SOCK`. Use agent-held keys as an automatic authentication fallback (before prompting for password). Support forwarding the agent channel to the remote host so multi-hop connections (e.g., bastion → internal server) work without copying private keys onto intermediate machines.
+
+### 13.2 Host Search & Filter ✅
+
+**Implemented.** Press `/` in the dashboard to activate a live filter bar. Characters narrow the host list in real-time, matching against name, hostname, user, tags, and status (case-insensitive). `↑`/`↓`/`j`/`k` navigate within filtered results. `Enter` connects to the selected match. `Esc` cancels and clears the filter. The Hosts tab title shows `(matched/total)` when a filter is active.
+
+### 13.3 Auto-Reconnect ✅
+
+**Implemented.** On channel EOF or unexpected disconnect, sessions automatically retry with exponential backoff (2 s, 4 s, 8 s, 16 s, capped at 30 s). Controlled by `session.auto_reconnect` (default true) and `session.reconnect_max_retries` (default 5) from config. The tab bar shows `● Recon. 2/5` with red styling during reconnection. On success, the session resumes as Active with scrollback preserved (VirtualTerminal state is never reset). On exhaustion, transitions to `Disconnected` with reason. The `ReconnectTracker` manages per-session backoff state; cleanup on `Alt+w` close.
+
+### 13.4 Session Recording & Replay ✅
+
+**Implemented.** When `session.recording = true` in config, all terminal I/O is recorded to asciicast v2 files at `~/.essh/recordings/<session-id>.cast`. Both output (remote → terminal) and input (user → remote) events are captured with sub-millisecond timestamps. Replay via `essh session replay <id>` plays back with accurate timing, capped at 2 s max delay per event. Controls: `Space` = pause/resume, `+`/`-` = speed (0.25×–16×), `q` = quit. `essh session list` shows available recordings. Recording is also active during reconnect sessions. The `SessionRecorder` is `Arc`-shared with the channel I/O task for lock-free concurrent writes.
+
+### 13.5 Split-Pane View
+
+Add `Alt+s` to split the session area horizontally — terminal on the left, host monitor on the right — as an alternative to the full-screen overlay toggle (`Alt+m`). Use ratatui's horizontal `Layout` to divide the session chunk. Pane width should be configurable or adjustable with `Alt+[` / `Alt+]`.
+
+### 13.6 Jump Host / ProxyJump Support
+
+The `[[hosts]]` config already has a `jump_host` field. Implement chained SSH connections: connect to the jump host first, then open a direct-tcpip channel to the target host through it. Support multi-hop chains (jump → jump → target). Display the full hop path in the session status bar.
+
+### 13.7 SCP/SFTP File Transfer
+
+Add `Alt+f` to open a file browser panel over the active session. List remote files via an SFTP subsystem channel. Support upload, download, mkdir, and delete with a two-pane local/remote layout. Show transfer progress with a bar gauge in the status line. Resume support for large files.
+
+### 13.8 Port Forwarding Manager
+
+Support local (`-L`) and remote (`-R`) TCP port forwards, configurable per-host in `[[hosts]]` entries or toggled live via `Alt+p` which opens a forwarding manager panel. Show active forwards in the session status bar. Forward lifecycle tied to the session — forwards close when the session disconnects.
+
+### 13.9 Background Activity Notifications
+
+Extend the existing cyan-underline new-output indicator with optional desktop notifications (via `notify-rust` or OS-native mechanisms). Trigger when a background session receives output matching a configurable regex pattern (e.g., `build complete`, `ERROR`, `OOM`). Configurable per-session or globally in `[session]` config.
+
+### 13.10 Live Fleet Health Dashboard ✅
+
+**Implemented.** The Fleet tab now runs periodic background TCP probes against all hosts, updating `●Online` / `●Offline` status in real-time. Each host shows colour-coded latency (green < 50 ms, yellow < 200 ms, red ≥ 200 ms) and a 16-column sparkline history. The summary bar shows fleet-wide availability percentage with a colour-coded gauge. Configurable via `[fleet]` in config: `probe_interval` (default 60 s), `probe_timeout` (default 5 s), `probe_enabled` (default true), `latency_history_samples` (default 30). Probes run concurrently via `tokio::spawn` to avoid blocking the event loop.
+
+---
+
+## 14. Open Questions
 
 1. ~~Should host metrics collection use a dedicated SSH channel or multiplex over the shell channel?~~ **Resolved:** Uses dedicated SSH exec channels per metric collection cycle.
 2. ~~Should the virtual terminal emulator support full alternate screen (`vim`, `htop` on remote)?~~ **Resolved:** Yes — `vt100::Parser` provides full alternate screen support.
-3. Should we support split-pane views (terminal + monitor side-by-side) in addition to the overlay toggle?
+3. ~~Should we support split-pane views (terminal + monitor side-by-side) in addition to the overlay toggle?~~ **Planned:** See §13.5.
 4. Plugin system architecture — sandboxing vs. ecosystem reach tradeoff? *(deferred to M10)*
 5. Should we support Windows or Linux/macOS only?
