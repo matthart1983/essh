@@ -8,7 +8,7 @@ pub fn render(f: &mut Frame) {
 
     // Center a popup ~60 cols wide, ~28 rows tall
     let popup_width = 60u16.min(area.width.saturating_sub(4));
-    let popup_height = 28u16.min(area.height.saturating_sub(2));
+    let popup_height = 32u16.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup = Rect::new(x, y, popup_width, popup_height);
@@ -41,8 +41,16 @@ pub fn render(f: &mut Frame) {
             Span::styled("Switch to last session", desc_style),
         ]),
         Line::from(vec![
+            Span::styled("    Alt+s       ", key_style),
+            Span::styled("Toggle split-pane (terminal + monitor)", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("    Alt+[/]     ", key_style),
+            Span::styled("Adjust split-pane width", desc_style),
+        ]),
+        Line::from(vec![
             Span::styled("    Alt+m       ", key_style),
-            Span::styled("Toggle host monitor", desc_style),
+            Span::styled("Toggle host monitor (full-screen)", desc_style),
         ]),
         Line::from(vec![
             Span::styled("    Alt+d       ", key_style),

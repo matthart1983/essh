@@ -950,6 +950,27 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
+            // Alt+s: toggle split-pane view (terminal + monitor side-by-side)
+            KeyCode::Char('s') => {
+                if app.session_manager.has_sessions() {
+                    app.split_pane = !app.split_pane;
+                }
+                return Ok(KeyAction::Handled);
+            }
+            // Alt+[: shrink terminal pane (more monitor)
+            KeyCode::Char('[') => {
+                if app.split_pane {
+                    app.split_pane_pct = app.split_pane_pct.saturating_sub(5).max(20);
+                }
+                return Ok(KeyAction::Handled);
+            }
+            // Alt+]: grow terminal pane (less monitor)
+            KeyCode::Char(']') => {
+                if app.split_pane {
+                    app.split_pane_pct = (app.split_pane_pct + 5).min(80);
+                }
+                return Ok(KeyAction::Handled);
+            }
             // Alt+d: detach (go back to dashboard)
             KeyCode::Char('d') => {
                 app.view = AppView::Dashboard;
@@ -1198,8 +1219,44 @@ async fn open_session(
 
     app.view = AppView::Session;
 
-    // Connect in background (but we're in the event loop, so do it inline for now)
-    match SshClient::connect(&connect_config).await {
+    // Resolve jump host chain from config
+    let jump_host_name = config
+        .hosts
+        .iter()
+        .find(|h| h.name == host.name || h.hostname == host.hostname)
+        .and_then(|h| h.jump_host.as_deref())
+        .filter(|j| !j.is_empty())
+        .map(|s| s.to_string());
+
+    let connect_result = if let Some(ref jump_name) = jump_host_name {
+        // Resolve jump host config
+        let jump_entry = config.hosts.iter().find(|h| h.name == *jump_name || h.hostname == *jump_name);
+        let jump_hostname = jump_entry.map(|e| e.hostname.clone()).unwrap_or_else(|| jump_name.clone());
+        let jump_port = jump_entry.map(|e| e.port).unwrap_or(22);
+        let jump_user = jump_entry
+            .and_then(|e| e.user.clone())
+            .or_else(|| config.general.default_user.clone())
+            .unwrap_or_else(whoami);
+        let jump_auth = jump_entry
+            .and_then(|e| e.key.as_ref())
+            .map(|k| AuthMethod::KeyFile(shellexpand::tilde(k).to_string().into()))
+            .unwrap_or_else(|| connect_config.auth.clone());
+
+        let jump_config = ConnectConfig {
+            hostname: jump_hostname,
+            port: jump_port,
+            username: jump_user,
+            auth: jump_auth,
+        };
+
+        app.set_status(format!("Connecting via jump host {}...", jump_name));
+        SshClient::connect_via_jump(&jump_config, &connect_config).await
+    } else {
+        SshClient::connect(&connect_config).await
+    };
+
+    // Connect (directly or via jump host)
+    match connect_result {
         Ok((mut ssh_session, fingerprint, banner)) => {
             // TOFU check
             let db = CacheDb::open_default()?;
@@ -1330,9 +1387,10 @@ async fn open_session(
                 None
             };
 
-            // Update session state
+            // Update session state and jump host info
             if let Some(session) = app.session_manager.sessions.get_mut(idx) {
                 session.state = SessionState::Active;
+                session.jump_host = ssh_session.jump_host.clone();
             }
 
             audit.log_session_event(
@@ -1852,6 +1910,11 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
             for h in hosts {
                 let tags: Vec<String> =
                     h.tags.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+                // Resolve jump_host from config if this host matches
+                let jump_host = config.hosts.iter()
+                    .find(|e| e.hostname == h.hostname && e.port == h.port)
+                    .and_then(|e| e.jump_host.clone())
+                    .filter(|j| !j.is_empty());
                 displays.push(HostDisplay {
                     name: h.hostname.clone(),
                     hostname: h.hostname,
@@ -1862,6 +1925,7 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                     tags: tags.join(", "),
                     latency_ms: None,
                     latency_history: Vec::new(),
+                    jump_host,
                 });
             }
         }
@@ -1887,6 +1951,7 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                 tags: tags.join(", "),
                 latency_ms: None,
                 latency_history: Vec::new(),
+                jump_host: entry.jump_host.clone().filter(|j| !j.is_empty()),
             });
         }
     }
@@ -2160,5 +2225,91 @@ mod tests {
         tracker.record_attempt(); // sets backoff_secs > 0
         // Immediately after attempt, should NOT be ready (backoff not elapsed)
         assert!(!tracker.should_retry());
+    }
+
+    #[test]
+    fn test_parse_target_user_at_host() {
+        let config = AppConfig::default();
+        let (user, host) = parse_target("deploy@web.example.com", &config);
+        assert_eq!(user, "deploy");
+        assert_eq!(host, "web.example.com");
+    }
+
+    #[test]
+    fn test_parse_target_bare_host() {
+        let config = AppConfig::default();
+        let (user, host) = parse_target("web.example.com", &config);
+        assert_eq!(host, "web.example.com");
+        assert!(!user.is_empty());
+    }
+
+    #[test]
+    fn test_parse_target_named_host_in_config() {
+        let mut config = AppConfig::default();
+        config.hosts.push(config::HostEntry {
+            name: "bastion".to_string(),
+            hostname: "bastion.internal.corp".to_string(),
+            port: 22,
+            user: Some("ops".to_string()),
+            key: None,
+            tags: std::collections::HashMap::new(),
+            jump_host: None,
+        });
+        let (user, host) = parse_target("bastion", &config);
+        assert_eq!(user, "ops");
+        assert_eq!(host, "bastion.internal.corp");
+    }
+
+    #[test]
+    fn test_jump_host_resolution_from_config() {
+        let mut config = AppConfig::default();
+        config.hosts.push(config::HostEntry {
+            name: "bastion".to_string(),
+            hostname: "bastion.corp.com".to_string(),
+            port: 22,
+            user: Some("ops".to_string()),
+            key: None,
+            tags: std::collections::HashMap::new(),
+            jump_host: None,
+        });
+        config.hosts.push(config::HostEntry {
+            name: "db-primary".to_string(),
+            hostname: "db01.internal.corp".to_string(),
+            port: 22,
+            user: Some("dba".to_string()),
+            key: None,
+            tags: std::collections::HashMap::new(),
+            jump_host: Some("bastion".to_string()),
+        });
+
+        // Find jump host for db-primary
+        let target = config.hosts.iter().find(|h| h.name == "db-primary").unwrap();
+        let jump_name = target.jump_host.as_deref().filter(|j| !j.is_empty());
+        assert_eq!(jump_name, Some("bastion"));
+
+        // Resolve jump host entry
+        let jump_entry = config.hosts.iter().find(|h| h.name == *jump_name.unwrap());
+        assert!(jump_entry.is_some());
+        let jump_entry = jump_entry.unwrap();
+        assert_eq!(jump_entry.hostname, "bastion.corp.com");
+        assert_eq!(jump_entry.user, Some("ops".to_string()));
+    }
+
+    #[test]
+    fn test_jump_host_empty_string_ignored() {
+        let mut config = AppConfig::default();
+        config.hosts.push(config::HostEntry {
+            name: "web".to_string(),
+            hostname: "web.example.com".to_string(),
+            port: 22,
+            user: None,
+            key: None,
+            tags: std::collections::HashMap::new(),
+            jump_host: Some("".to_string()),
+        });
+
+        let target = config.hosts.iter().find(|h| h.name == "web").unwrap();
+        let jump_name = target.jump_host.as_deref().filter(|j| !j.is_empty());
+        assert_eq!(jump_name, None);
     }
 }

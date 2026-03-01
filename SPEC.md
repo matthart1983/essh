@@ -490,6 +490,8 @@ essh plugin install <name>          # Install a plugin
 | `Alt+1`–`Alt+9` | Switch to session tab N |
 | `Alt+←` / `Alt+→` | Cycle to previous / next session |
 | `Alt+Tab` | Switch to last-used session |
+| `Alt+s` | Toggle split-pane view (terminal + monitor side-by-side) |
+| `Alt+[` / `Alt+]` | Adjust split-pane width (5% steps, 20–80% range) |
 | `Alt+m` | Toggle host monitor overlay on active session |
 | `Alt+d` | Detach (suspend) active session |
 | `Alt+w` | Close active session |
@@ -636,13 +638,13 @@ Wire up the existing `AuthMethod::Agent` variant to discover keys from the local
 
 **Implemented.** When `session.recording = true` in config, all terminal I/O is recorded to asciicast v2 files at `~/.essh/recordings/<session-id>.cast`. Both output (remote → terminal) and input (user → remote) events are captured with sub-millisecond timestamps. Replay via `essh session replay <id>` plays back with accurate timing, capped at 2 s max delay per event. Controls: `Space` = pause/resume, `+`/`-` = speed (0.25×–16×), `q` = quit. `essh session list` shows available recordings. Recording is also active during reconnect sessions. The `SessionRecorder` is `Arc`-shared with the channel I/O task for lock-free concurrent writes.
 
-### 13.5 Split-Pane View
+### 13.5 Split-Pane View ✅
 
-Add `Alt+s` to split the session area horizontally — terminal on the left, host monitor on the right — as an alternative to the full-screen overlay toggle (`Alt+m`). Use ratatui's horizontal `Layout` to divide the session chunk. Pane width should be configurable or adjustable with `Alt+[` / `Alt+]`.
+**Implemented.** Press `Alt+s` in session view to split the area horizontally — terminal on the left, host monitor on the right — as an alternative to the full-screen overlay toggle (`Alt+m`). Uses ratatui's horizontal `Layout` to divide the session area. Pane width is adjustable with `Alt+[` (shrink terminal, 5% steps) and `Alt+]` (grow terminal, 5% steps), clamped to 20–80% range. Default terminal pane is 60%. The split-pane state is per-application (applies to the active session). Help overlay and session footer updated with new keybindings.
 
-### 13.6 Jump Host / ProxyJump Support
+### 13.6 Jump Host / ProxyJump Support ✅
 
-The `[[hosts]]` config already has a `jump_host` field. Implement chained SSH connections: connect to the jump host first, then open a direct-tcpip channel to the target host through it. Support multi-hop chains (jump → jump → target). Display the full hop path in the session status bar.
+**Implemented.** The `[[hosts]]` config `jump_host` field is now wired up. When connecting to a host with `jump_host` set, ESSH first connects to the jump host, then opens a `direct-tcpip` channel to forward TCP to the target host. A new SSH handshake runs over this forwarded channel via a custom `ChannelStream` (implements `AsyncRead` + `AsyncWrite` backed by mpsc channels). The session status bar shows the hop path as `user@target:port via jump_host`. Jump host authentication uses the jump host's configured key, falling back to the target's auth method. Empty `jump_host` strings are ignored.
 
 ### 13.7 SCP/SFTP File Transfer
 

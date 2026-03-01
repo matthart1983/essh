@@ -152,7 +152,13 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, session: &Session, diag: Opt
                     SessionState::Connecting => "Connecting...".to_string(),
                     SessionState::Disconnected { reason } => format!("Disconnected: {}", reason),
                     SessionState::Reconnecting { attempt, max } => format!("Reconnecting ({}/{})", attempt, max),
-                    _ => format!("{}@{}:{}", session.username, session.hostname, session.port),
+                    _ => {
+                        if let Some(ref jump) = session.jump_host {
+                            format!("{}@{}:{} via {}", session.username, session.hostname, session.port, jump)
+                        } else {
+                            format!("{}@{}:{}", session.username, session.hostname, session.port)
+                        }
+                    }
                 },
                 Style::default().fg(Color::DarkGray),
             ),
@@ -169,14 +175,14 @@ pub fn render_footer(f: &mut Frame, area: Rect) {
     let footer = Paragraph::new(Line::from(vec![
         Span::styled("Alt+←→", Style::default().fg(Color::Cyan)),
         Span::raw(":Switch  "),
+        Span::styled("Alt+s", Style::default().fg(Color::Cyan)),
+        Span::raw(":Split  "),
         Span::styled("Alt+m", Style::default().fg(Color::Cyan)),
         Span::raw(":Monitor  "),
         Span::styled("Alt+d", Style::default().fg(Color::Cyan)),
         Span::raw(":Detach  "),
         Span::styled("Alt+w", Style::default().fg(Color::Cyan)),
         Span::raw(":Close  "),
-        Span::styled("Alt+r", Style::default().fg(Color::Cyan)),
-        Span::raw(":Rename  "),
         Span::styled("Alt+h", Style::default().fg(Color::Cyan)),
         Span::raw(":Help"),
     ]))

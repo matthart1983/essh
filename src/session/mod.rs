@@ -128,6 +128,7 @@ pub struct Session {
     pub terminal: VirtualTerminal,
     pub created_at: Instant,
     pub has_new_output: bool,
+    pub jump_host: Option<String>,
 }
 
 impl Session {
@@ -150,6 +151,7 @@ impl Session {
             terminal: VirtualTerminal::new(24, 80),
             created_at: Instant::now(),
             has_new_output: false,
+            jump_host: None,
         }
     }
 

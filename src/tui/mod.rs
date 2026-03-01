@@ -25,6 +25,7 @@ pub struct HostDisplay {
     pub tags: String,
     pub latency_ms: Option<f64>,
     pub latency_history: Vec<u64>,
+    pub jump_host: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +64,9 @@ pub struct App {
     // Host search/filter
     pub search_active: bool,
     pub search_query: String,
+    // Split-pane view: terminal + monitor side-by-side
+    pub split_pane: bool,
+    pub split_pane_pct: u16, // terminal width percentage (20-80)
     // Per-session diagnostics snapshots (indexed by session manager index)
     pub session_diagnostics: Vec<Option<DiagnosticsSnapshot>>,
     // Per-session host metrics (indexed by session manager index)
@@ -88,6 +92,8 @@ impl App {
             show_help: false,
             search_active: false,
             search_query: String::new(),
+            split_pane: false,
+            split_pane_pct: 60,
             session_diagnostics: Vec::new(),
             session_metrics: Vec::new(),
             session_cpu_history: Vec::new(),
@@ -221,7 +227,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(3),  // tab bar
-                        Constraint::Min(4),    // terminal
+                        Constraint::Min(4),    // terminal (or terminal + monitor split)
                         Constraint::Length(2), // status bar
                         Constraint::Length(2), // footer
                     ])
@@ -234,14 +240,67 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     active_idx,
                 );
 
-                // Resize virtual terminal to match the render area
-                let term_area = chunks[1];
-                if let Some(session) = app.session_manager.sessions.get_mut(active_idx) {
-                    session.terminal.resize(term_area.height, term_area.width);
+                if app.split_pane {
+                    // Split-pane: terminal on left, host monitor on right
+                    let panes = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(app.split_pane_pct),
+                            Constraint::Percentage(100 - app.split_pane_pct),
+                        ])
+                        .split(chunks[1]);
+
+                    // Resize virtual terminal to match the left pane
+                    if let Some(session) = app.session_manager.sessions.get_mut(active_idx) {
+                        session.terminal.resize(panes[0].height, panes[0].width);
+                    }
+
+                    if let Some(session) = app.session_manager.sessions.get(active_idx) {
+                        session_view::render_terminal(frame, panes[0], session);
+                    }
+
+                    // Render host monitor in the right pane
+                    let metrics = app.session_metrics.get(active_idx)
+                        .and_then(|m| m.as_ref())
+                        .cloned()
+                        .unwrap_or_default();
+                    let cpu_hist = app.session_cpu_history.get(active_idx)
+                        .cloned()
+                        .unwrap_or_else(|| MetricHistory::new(60));
+                    let mem_hist = app.session_mem_history.get(active_idx)
+                        .cloned()
+                        .unwrap_or_else(|| MetricHistory::new(60));
+                    let rx_hist = app.session_net_rx_history.get(active_idx)
+                        .cloned()
+                        .unwrap_or_else(|| MetricHistory::new(60));
+                    let tx_hist = app.session_net_tx_history.get(active_idx)
+                        .cloned()
+                        .unwrap_or_else(|| MetricHistory::new(60));
+
+                    host_monitor::render(
+                        frame,
+                        panes[1],
+                        &metrics,
+                        &cpu_hist,
+                        &mem_hist,
+                        &rx_hist,
+                        &tx_hist,
+                        &app.monitor_sort,
+                        app.monitor_process_scroll,
+                    );
+                } else {
+                    // Full-width terminal
+                    let term_area = chunks[1];
+                    if let Some(session) = app.session_manager.sessions.get_mut(active_idx) {
+                        session.terminal.resize(term_area.height, term_area.width);
+                    }
+
+                    if let Some(session) = app.session_manager.sessions.get(active_idx) {
+                        session_view::render_terminal(frame, chunks[1], session);
+                    }
                 }
 
                 if let Some(session) = app.session_manager.sessions.get(active_idx) {
-                    session_view::render_terminal(frame, chunks[1], session);
                     let diag = app.session_diagnostics.get(active_idx).and_then(|d| d.as_ref());
                     session_view::render_status_bar(frame, chunks[2], session, diag);
                 }
@@ -321,6 +380,7 @@ mod tests {
             tags: tags.to_string(),
             latency_ms: None,
             latency_history: Vec::new(),
+            jump_host: None,
         }
     }
 
@@ -411,5 +471,44 @@ mod tests {
         assert_eq!(app.filtered_host_indices().len(), 2);
         app.search_query.clear();
         assert_eq!(app.filtered_host_indices().len(), 4);
+    }
+
+    #[test]
+    fn test_split_pane_default_off() {
+        let app = App::new(9);
+        assert!(!app.split_pane);
+        assert_eq!(app.split_pane_pct, 60);
+    }
+
+    #[test]
+    fn test_split_pane_toggle() {
+        let mut app = App::new(9);
+        assert!(!app.split_pane);
+        app.split_pane = !app.split_pane;
+        assert!(app.split_pane);
+        app.split_pane = !app.split_pane;
+        assert!(!app.split_pane);
+    }
+
+    #[test]
+    fn test_split_pane_pct_bounds() {
+        let mut app = App::new(9);
+        app.split_pane = true;
+
+        // Shrink to minimum
+        app.split_pane_pct = 25;
+        app.split_pane_pct = app.split_pane_pct.saturating_sub(5).max(20);
+        assert_eq!(app.split_pane_pct, 20);
+        // Can't go below 20
+        app.split_pane_pct = app.split_pane_pct.saturating_sub(5).max(20);
+        assert_eq!(app.split_pane_pct, 20);
+
+        // Grow to maximum
+        app.split_pane_pct = 75;
+        app.split_pane_pct = (app.split_pane_pct + 5).min(80);
+        assert_eq!(app.split_pane_pct, 80);
+        // Can't go above 80
+        app.split_pane_pct = (app.split_pane_pct + 5).min(80);
+        assert_eq!(app.split_pane_pct, 80);
     }
 }
