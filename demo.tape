@@ -188,31 +188,14 @@ Sleep 3s
 Type@75ms "hostname && date"
 Sleep 200ms
 Enter
-Sleep 1.5s
-
-# Switch between sessions: Alt+Tab = last-used
-Alt+Tab
-Sleep 1.5s
-
-# Switch back
-Alt+Tab
-Sleep 1.5s
+Sleep 2s
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 10: Help Overlay
+#  ACT 10: Detach & wrap up
 # ══════════════════════════════════════════════════════════════════════
 
-Alt+h
-Sleep 3.5s
-Alt+h
-Sleep 1s
-
-# ══════════════════════════════════════════════════════════════════════
-#  ACT 11: Detach & wrap up
-# ══════════════════════════════════════════════════════════════════════
-
-# Detach to dashboard
-Alt+d
+# Detach to dashboard (∂ = macOS Option+d)
+Type "∂"
 Sleep 1.5s
 
 # Sessions tab — show 2 active sessions
