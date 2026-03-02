@@ -2533,19 +2533,37 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
             for h in hosts {
                 let tags: Vec<String> =
                     h.tags.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
-                // Resolve jump_host from config if this host matches
-                let jump_host = config.hosts.iter()
-                    .find(|e| e.hostname == h.hostname && e.port == h.port)
+                // Merge config entry data (name, user, jump_host) for this cached host
+                let config_entry = config.hosts.iter()
+                    .find(|e| e.hostname == h.hostname && e.port == h.port);
+                let name = config_entry
+                    .map(|e| e.name.clone())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| h.hostname.clone());
+                let user = config_entry
+                    .and_then(|e| e.user.clone())
+                    .unwrap_or_default();
+                let jump_host = config_entry
                     .and_then(|e| e.jump_host.clone())
                     .filter(|j| !j.is_empty());
+                // Merge tags from config if cache tags are empty
+                let display_tags = if tags.is_empty() {
+                    if let Some(entry) = config_entry {
+                        entry.tags.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(", ")
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    tags.join(", ")
+                };
                 displays.push(HostDisplay {
-                    name: h.hostname.clone(),
+                    name,
                     hostname: h.hostname,
                     port: h.port,
-                    user: String::new(),
+                    user,
                     status: HostStatus::Unknown,
                     last_seen: h.last_seen,
-                    tags: tags.join(", "),
+                    tags: display_tags,
                     latency_ms: None,
                     latency_history: Vec::new(),
                     jump_host,

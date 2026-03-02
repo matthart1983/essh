@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────
 #  ESSH Demo — Enterprise SSH Client
-#  Real TUI, real SSH, organic typing
+#  Real TUI, real SSH to remote host, organic typing
 # ─────────────────────────────────────────────────────────────────────
 
 Output demo.gif
@@ -30,7 +30,7 @@ Sleep 500ms
 Show
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 1: Launch & Explore Dashboard
+#  ACT 1: Launch & Dashboard
 # ══════════════════════════════════════════════════════════════════════
 
 Type@120ms "./target/release/essh"
@@ -41,7 +41,7 @@ Sleep 2.5s
 # Sessions tab (default) — let viewer take it in
 Sleep 1.5s
 
-# ── Hosts tab — filter straight to localhost ──────────────────────────
+# ── Hosts tab — filter to localhost and connect ───────────────────────
 Type "2"
 Sleep 1.5s
 
@@ -54,16 +54,19 @@ Sleep 1.5s
 Enter
 Sleep 3.5s
 
-# ── Sysadmin commands ─────────────────────────────────────────────────
-Type@75ms "top -l 1 -n 5 -s 0 | head -12"
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 2: Sysadmin commands on the remote host
+# ══════════════════════════════════════════════════════════════════════
+
+Type@75ms "hostname && uptime"
 Sleep 200ms
 Enter
 Sleep 1.5s
 
-Type@75ms "diskutil list | head -15"
+Type@75ms "top -l 1 -n 5 -s 0 | head -12"
 Sleep 200ms
 Enter
-Sleep 1.5s
+Sleep 2s
 
 Type@75ms "netstat -an | grep LISTEN | head -10"
 Sleep 200ms
@@ -71,7 +74,7 @@ Enter
 Sleep 2s
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 5: Host Monitor (remote htop via Alt+m)
+#  ACT 3: Host Monitor (remote htop)
 # ══════════════════════════════════════════════════════════════════════
 
 # µ = macOS Option+m → triggers monitor toggle
@@ -83,7 +86,7 @@ Escape
 Sleep 1s
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 6: Split-Pane View (terminal + monitor)
+#  ACT 4: Split-Pane View (terminal + monitor side-by-side)
 # ══════════════════════════════════════════════════════════════════════
 
 # ß = macOS Option+s → triggers split-pane toggle
@@ -91,7 +94,7 @@ Type "ß"
 Sleep 3s
 
 # Run commands while split — both panes live
-Type@75ms "tail -5 /var/log/system.log"
+Type@75ms "df -h / && sysctl hw.memsize"
 Sleep 200ms
 Enter
 Sleep 2s
@@ -106,7 +109,7 @@ Type "ß"
 Sleep 1s
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 7: File Browser (Alt+f)
+#  ACT 5: File Browser (Alt+f)
 # ══════════════════════════════════════════════════════════════════════
 
 Alt+f
@@ -138,7 +141,7 @@ Escape
 Sleep 1.5s
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 8: Command Palette (Ctrl+P)
+#  ACT 6: Command Palette (Ctrl+P fuzzy finder)
 # ══════════════════════════════════════════════════════════════════════
 
 Ctrl+p
@@ -162,10 +165,10 @@ Sleep 1.5s
 
 # Select — navigate to Fleet tab
 Enter
-Sleep 2.5s
+Sleep 3s
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 9: Multi-Session (connect second host)
+#  ACT 7: Multi-Session (open second session to same host)
 # ══════════════════════════════════════════════════════════════════════
 
 # Use palette to go to hosts
@@ -182,16 +185,16 @@ Sleep 300ms
 Type@90ms "local"
 Sleep 600ms
 Enter
-Sleep 3s
+Sleep 3.5s
 
 # Run a command in second session
-Type@75ms "hostname && date"
+Type@75ms "hostname && date && whoami"
 Sleep 200ms
 Enter
 Sleep 2s
 
 # ══════════════════════════════════════════════════════════════════════
-#  ACT 10: Detach & wrap up
+#  ACT 8: Detach & wrap up
 # ══════════════════════════════════════════════════════════════════════
 
 # Detach to dashboard (∂ = macOS Option+d)
@@ -204,8 +207,4 @@ Sleep 2s
 
 # Final fleet view
 Type "3"
-Sleep 2.5s
-
-# ── Quit ──────────────────────────────────────────────────────────────
-Type "q"
-Sleep 1.5s
+Sleep 3s
