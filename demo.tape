@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────
 #  ESSH Demo — Enterprise SSH Client
-#  Real TUI, real SSH session, real interactions
+#  Real TUI, real SSH, organic typing
 # ─────────────────────────────────────────────────────────────────────
 
 Output demo.gif
@@ -22,191 +22,289 @@ Set Margin 12
 Set MarginFill "#1a1a2e"
 Set CursorBlink true
 
-# ── Build fresh (hidden) ──────────────────────────────────────────────
+# ── Setup (hidden) ────────────────────────────────────────────────────
 Hide
 Type "clear"
 Enter
 Sleep 500ms
 Show
 
-# ── Launch ESSH ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 1: Launch & Explore Dashboard
+# ══════════════════════════════════════════════════════════════════════
+
 Type@120ms "./target/release/essh"
-Sleep 700ms
+Sleep 500ms
 Enter
-Sleep 2s
+Sleep 2.5s
 
-# ── Dashboard: Sessions tab (default) ────────────────────────────────
-# Pause to let viewer see the dashboard
-Sleep 2s
+# Sessions tab (default) — let viewer take it in
+Sleep 1.5s
 
-# ── Switch to Hosts tab ──────────────────────────────────────────────
+# ── Hosts tab ─────────────────────────────────────────────────────────
 Type "2"
 Sleep 2s
 
-# ── Browse host list — navigate down through hosts ───────────────────
+# Browse the host list
 Down
-Sleep 500ms
+Sleep 400ms
 Down
-Sleep 500ms
+Sleep 400ms
 Down
-Sleep 500ms
+Sleep 400ms
 Down
-Sleep 500ms
+Sleep 400ms
 Down
-Sleep 500ms
+Sleep 400ms
 Down
-Sleep 500ms
+Sleep 400ms
+Down
+Sleep 400ms
+Down
+Sleep 800ms
 
-# Pause at bottom
-Sleep 1s
-
-# Navigate back up
+# Back to top
 Up
-Sleep 400ms
+Sleep 300ms
 Up
-Sleep 400ms
+Sleep 300ms
 Up
-Sleep 400ms
+Sleep 300ms
 Up
-Sleep 400ms
+Sleep 300ms
 Up
-Sleep 400ms
+Sleep 300ms
+Up
+Sleep 300ms
+Up
+Sleep 300ms
 Up
 Sleep 1.5s
 
-# ── Search/filter hosts with "/" ──────────────────────────────────────
+# ── Search / filter: "prod" ──────────────────────────────────────────
 Type "/"
-Sleep 600ms
+Sleep 500ms
 Type@100ms "prod"
 Sleep 2s
+Escape
+Sleep 800ms
 
-# Clear search
+# Search again: "web"
+Type "/"
+Sleep 400ms
+Type@100ms "web"
+Sleep 1.5s
 Escape
 Sleep 1s
 
-# ── Fleet tab — live health overview ──────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 2: Fleet Health Dashboard
+# ══════════════════════════════════════════════════════════════════════
+
 Type "3"
+Sleep 5s
+
+# Let probes run — fleet health should update
 Sleep 3s
 
-# ── Config tab ────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 3: Config tab (quick look)
+# ══════════════════════════════════════════════════════════════════════
+
 Type "4"
 Sleep 2s
 
-# ── Back to Hosts, connect to localhost ───────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 4: Connect to localhost — real SSH
+# ══════════════════════════════════════════════════════════════════════
+
 Type "2"
 Sleep 800ms
-
-# Search for local
 Type "/"
 Sleep 400ms
 Type@90ms "local"
-Sleep 1s
-
-# Select and connect
+Sleep 800ms
 Enter
-Sleep 3s
+Sleep 3.5s
 
-# ── Live SSH session — type real commands ─────────────────────────────
-Type@80ms "echo '=== ESSH Live Session ==='"
-Sleep 300ms
+# ── Real commands ─────────────────────────────────────────────────────
+Type@75ms "echo '=== ESSH Live Session ==='"
+Sleep 200ms
 Enter
 Sleep 1s
 
-Type@80ms "uname -a"
-Sleep 300ms
+Type@75ms "uname -a"
+Sleep 200ms
 Enter
-Sleep 1.5s
+Sleep 1.2s
 
-Type@80ms "uptime"
-Sleep 300ms
+Type@75ms "uptime"
+Sleep 200ms
 Enter
 Sleep 1s
 
-Type@80ms "df -h / | head -3"
-Sleep 300ms
+Type@75ms "df -h /"
+Sleep 200ms
 Enter
-Sleep 1.5s
+Sleep 1.2s
 
-Type@80ms "ps aux --sort=-%cpu | head -6"
-Sleep 300ms
+Type@75ms "ps aux -r | head -8"
+Sleep 200ms
 Enter
 Sleep 2s
 
-# ── Help overlay (?) ─────────────────────────────────────────────────
-Alt+h
-Sleep 3s
-Alt+h
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 5: Host Monitor (remote htop via Alt+m)
+# ══════════════════════════════════════════════════════════════════════
+
+# µ = macOS Option+m → triggers monitor toggle
+Type "µ"
+Sleep 5s
+
+# Return to terminal
+Escape
 Sleep 1s
 
-# ── Command Palette (Ctrl+P) from session ────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 6: Split-Pane View (terminal + monitor)
+# ══════════════════════════════════════════════════════════════════════
+
+# ß = macOS Option+s → triggers split-pane toggle
+Type "ß"
+Sleep 3s
+
+# Run commands while split — both panes visible
+Type@75ms "date"
+Sleep 200ms
+Enter
+Sleep 1.5s
+
+Type@75ms "whoami"
+Sleep 200ms
+Enter
+Sleep 2.5s
+
+# Close split
+Type "ß"
+Sleep 1s
+
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 7: File Browser (Alt+f)
+# ══════════════════════════════════════════════════════════════════════
+
+Alt+f
+Sleep 2.5s
+
+# Browse local files
+Down
+Sleep 400ms
+Down
+Sleep 400ms
+Down
+Sleep 400ms
+
+# Switch to remote pane
+Tab
+Sleep 1.2s
+
+Down
+Sleep 400ms
+Down
+Sleep 400ms
+
+# Back to local
+Tab
+Sleep 1s
+
+# Close browser
+Escape
+Sleep 1.5s
+
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 8: Command Palette (Ctrl+P)
+# ══════════════════════════════════════════════════════════════════════
+
 Ctrl+p
 Sleep 1.5s
 
-# Type a search to filter palette entries
+# Search: "host"
 Type@90ms "host"
 Sleep 1.5s
 
-# Clear and try another search
+# Clear, try "monitor"
 Backspace 4
-Sleep 400ms
+Sleep 300ms
+Type@90ms "monitor"
+Sleep 1.5s
+
+# Clear, search "fleet"
+Backspace 7
+Sleep 300ms
 Type@90ms "fleet"
 Sleep 1.5s
 
-# Select entry to go to Fleet dashboard
+# Select — navigate to Fleet tab
 Enter
-Sleep 2s
+Sleep 2.5s
 
-# ── Command Palette again — search for host to connect ───────────────
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 9: Multi-Session (connect second host)
+# ══════════════════════════════════════════════════════════════════════
+
+# Use palette to go to hosts
 Ctrl+p
-Sleep 1s
-Type@90ms "web"
+Sleep 800ms
+Type@90ms "hosts"
+Sleep 800ms
+Enter
 Sleep 1.5s
 
-# Dismiss palette
-Escape
-Sleep 1s
-
-# ── Back to hosts tab, connect to localhost again for monitor demo ────
-Type "2"
-Sleep 500ms
+# Connect second session to localhost
 Type "/"
 Sleep 300ms
 Type@90ms "local"
-Sleep 500ms
+Sleep 600ms
 Enter
 Sleep 3s
 
-# ── File browser (Alt+f) ─────────────────────────────────────────────
-Alt+f
-Sleep 3s
-
-# Navigate a bit
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Up
-Sleep 400ms
-
-# Close file browser
-Escape
-Sleep 1.5s
-
-# ── More terminal commands to show it's a real session ────────────────
-Type@80ms "ls -la"
-Sleep 300ms
+# Run a command in second session
+Type@75ms "hostname && date"
+Sleep 200ms
 Enter
 Sleep 1.5s
 
-# ── Detach back to dashboard ─────────────────────────────────────────
+# Switch between sessions: Alt+Tab = last-used
+Alt+Tab
+Sleep 1.5s
+
+# Switch back
+Alt+Tab
+Sleep 1.5s
+
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 10: Help Overlay
+# ══════════════════════════════════════════════════════════════════════
+
+Alt+h
+Sleep 3.5s
+Alt+h
+Sleep 1s
+
+# ══════════════════════════════════════════════════════════════════════
+#  ACT 11: Detach & wrap up
+# ══════════════════════════════════════════════════════════════════════
+
+# Detach to dashboard
 Alt+d
+Sleep 1.5s
+
+# Sessions tab — show 2 active sessions
+Type "1"
 Sleep 2s
 
-# ── Final look: Hosts tab with all hosts ─────────────────────────────
-Type "2"
-Sleep 2s
+# Final fleet view
+Type "3"
+Sleep 2.5s
 
 # ── Quit ──────────────────────────────────────────────────────────────
 Type "q"
