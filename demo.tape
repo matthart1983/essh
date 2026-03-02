@@ -10,8 +10,8 @@ Require ./target/release/essh
 Set Shell bash
 Set FontFamily "Menlo"
 Set FontSize 15
-Set Width 1400
-Set Height 750
+Set Width 1800
+Set Height 1000
 Set Padding 15
 Set Framerate 30
 Set TypingSpeed 70ms
@@ -54,28 +54,18 @@ Sleep 1.5s
 Enter
 Sleep 3.5s
 
-# ── Real commands ─────────────────────────────────────────────────────
-Type@75ms "echo '=== ESSH Live Session ==='"
+# ── Sysadmin commands ─────────────────────────────────────────────────
+Type@75ms "top -l 1 -n 5 -s 0 | head -12"
 Sleep 200ms
 Enter
-Sleep 1s
+Sleep 1.5s
 
-Type@75ms "uname -a"
+Type@75ms "diskutil list | head -15"
 Sleep 200ms
 Enter
-Sleep 1.2s
+Sleep 1.5s
 
-Type@75ms "uptime"
-Sleep 200ms
-Enter
-Sleep 1s
-
-Type@75ms "df -h /"
-Sleep 200ms
-Enter
-Sleep 1.2s
-
-Type@75ms "ps aux -r | head -8"
+Type@75ms "netstat -an | grep LISTEN | head -10"
 Sleep 200ms
 Enter
 Sleep 2s
@@ -100,16 +90,16 @@ Sleep 1s
 Type "ß"
 Sleep 3s
 
-# Run commands while split — both panes visible
-Type@75ms "date"
+# Run commands while split — both panes live
+Type@75ms "tail -5 /var/log/system.log"
 Sleep 200ms
 Enter
-Sleep 1.5s
+Sleep 2s
 
-Type@75ms "whoami"
+Type@75ms "last -5"
 Sleep 200ms
 Enter
-Sleep 2.5s
+Sleep 2s
 
 # Close split
 Type "ß"
