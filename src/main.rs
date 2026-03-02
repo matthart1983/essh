@@ -1775,17 +1775,23 @@ async fn open_session(
 ) -> anyhow::Result<()> {
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    let user = if host.user.is_empty() {
-        config
-            .general
-            .default_user
-            .clone()
-            .unwrap_or_else(whoami)
-    } else {
+    // Look up per-host config entry for user/key overrides
+    let host_entry = config.hosts.iter().find(|e| e.hostname == host.hostname && e.port == host.port);
+
+    let user = if !host.user.is_empty() {
         host.user.clone()
+    } else if let Some(entry) = host_entry {
+        entry.user.clone().unwrap_or_else(|| {
+            config.general.default_user.clone().unwrap_or_else(whoami)
+        })
+    } else {
+        config.general.default_user.clone().unwrap_or_else(whoami)
     };
 
-    let auth = if let Some(ref key) = config.general.default_key {
+    let auth = if let Some(ref key) = host_entry.and_then(|e| e.key.as_ref()) {
+        let expanded = shellexpand::tilde(key).to_string();
+        AuthMethod::KeyFile(expanded.into())
+    } else if let Some(ref key) = config.general.default_key {
         let expanded = shellexpand::tilde(key).to_string();
         AuthMethod::KeyFile(expanded.into())
     } else if std::env::var("SSH_AUTH_SOCK").is_ok() {
