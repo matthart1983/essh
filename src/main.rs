@@ -902,6 +902,23 @@ async fn handle_key_event(
     output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
     reconnect_trackers: &mut Vec<Option<ReconnectTracker>>,
 ) -> anyhow::Result<KeyAction> {
+    // Command palette — intercept before everything else
+    if app.command_palette.is_some() {
+        return handle_palette_key(key, app, config, audit, runtimes, output_rxs).await;
+    }
+
+    // Ctrl+P: open command palette (from any view)
+    if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let mut palette = tui::command_palette::CommandPalette::new();
+        palette.update(
+            &app.hosts,
+            &app.session_manager.sessions,
+            app.session_manager.has_sessions(),
+        );
+        app.command_palette = Some(palette);
+        return Ok(KeyAction::Handled);
+    }
+
     // Help toggle — intercept before anything else
     if app.show_help {
         match key.code {
@@ -1532,6 +1549,96 @@ fn handle_portfwd_key(
         }
         _ => {}
     }
+    Ok(KeyAction::Handled)
+}
+
+async fn handle_palette_key(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    config: &AppConfig,
+    audit: &AuditLogger,
+    runtimes: &mut Vec<Option<SessionRuntime>>,
+    output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
+) -> anyhow::Result<KeyAction> {
+    use tui::command_palette::PaletteAction;
+
+    let palette = match app.command_palette.as_mut() {
+        Some(p) => p,
+        None => return Ok(KeyAction::Handled),
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            app.command_palette = None;
+        }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.command_palette = None;
+        }
+        KeyCode::Down | KeyCode::Tab => {
+            palette.move_down();
+        }
+        KeyCode::Up | KeyCode::BackTab => {
+            palette.move_up();
+        }
+        KeyCode::Backspace => {
+            palette.query.pop();
+            palette.update(
+                &app.hosts,
+                &app.session_manager.sessions,
+                app.session_manager.has_sessions(),
+            );
+        }
+        KeyCode::Enter => {
+            if let Some(action) = palette.selected_action().cloned() {
+                app.command_palette = None;
+                match action {
+                    PaletteAction::ConnectHost(idx) => {
+                        if let Some(host) = app.hosts.get(idx).cloned() {
+                            open_session(app, config, audit, &host, runtimes, output_rxs).await?;
+                        }
+                    }
+                    PaletteAction::SwitchSession(idx) => {
+                        if app.session_manager.switch_to(idx) {
+                            if let Some(session) = app.session_manager.sessions.get(idx) {
+                                let label = session.label.clone();
+                                app.notifications.retain(|n| n.session_label != label);
+                            }
+                            app.view = AppView::Session;
+                        }
+                    }
+                    PaletteAction::SetView(view) => {
+                        if app.session_manager.has_sessions() || view == AppView::Dashboard {
+                            app.view = view;
+                        }
+                    }
+                    PaletteAction::SetDashboardTab(tab) => {
+                        app.view = AppView::Dashboard;
+                        app.dashboard_tab = tab;
+                    }
+                    PaletteAction::ToggleSplitPane => {
+                        if app.session_manager.has_sessions() {
+                            app.split_pane = !app.split_pane;
+                        }
+                    }
+                    PaletteAction::ToggleHelp => {
+                        app.show_help = !app.show_help;
+                    }
+                }
+            } else {
+                app.command_palette = None;
+            }
+        }
+        KeyCode::Char(c) => {
+            palette.query.push(c);
+            palette.update(
+                &app.hosts,
+                &app.session_manager.sessions,
+                app.session_manager.has_sessions(),
+            );
+        }
+        _ => {}
+    }
+
     Ok(KeyAction::Handled)
 }
 

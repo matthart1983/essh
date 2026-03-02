@@ -45,6 +45,7 @@
 | **File Transfer** | `Alt+f` opens a two-pane file browser. Upload/download via SSH exec channels. Transfer progress bar. |
 | **Port Forwarding** | `Alt+p` manages local TCP port forwards. Live add/remove with SSH `direct-tcpip` proxy. Active forwards shown in status bar. |
 | **Background Notifications** | Regex-based alerts when background sessions match patterns (e.g. `ERROR`, `build complete`). Yellow `!` tab indicator. |
+| **Command Palette** | `Ctrl+p` opens a fuzzy-matched command palette — jump to hosts, sessions, views, or actions instantly. Multi-word scoring with prefix bonuses. |
 | **TUI Dashboard** | 4-tab dashboard (Sessions, Hosts, Fleet, Config) with a Netwatch-inspired Cyan/Yellow/DarkGray aesthetic. |
 
 ---
@@ -298,6 +299,7 @@ key = "~/.ssh/deploy_key"
 | `Alt+[` / `Alt+]` | Adjust split-pane width |
 | `Alt+f` | File browser (upload/download) |
 | `Alt+p` | Port forwarding manager |
+| `Ctrl+p` | Command palette (fuzzy finder) |
 
 ### Dashboard
 
@@ -410,6 +412,7 @@ src/
 │   ├── filebrowser_view.rs  # Two-pane file browser UI
 │   ├── portfwd_view.rs      # Port forwarding manager panel
 │   ├── help.rs          # Help overlay popup
+│   ├── command_palette.rs  # Fuzzy-matched command palette (Ctrl+P)
 │   └── widgets.rs       # Sparklines, bar gauges, formatters
 ├── filetransfer/        # Two-pane file browser, upload/download via SSH exec
 ├── fleet/               # Live fleet health — background TCP probes, latency tracking
@@ -443,7 +446,7 @@ Contributions are welcome! Please:
 ```bash
 cargo build              # Debug build
 cargo build --release    # Release build
-cargo test               # Run all tests (144 tests)
+cargo test               # Run all tests (154 tests)
 cargo clippy             # Lint checks
 cargo fmt --check        # Format check
 ```

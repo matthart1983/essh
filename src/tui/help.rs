@@ -61,6 +61,10 @@ pub fn render(f: &mut Frame) {
             Span::styled("File browser (upload/download)", desc_style),
         ]),
         Line::from(vec![
+            Span::styled("    Ctrl+p      ", key_style),
+            Span::styled("Command palette (fuzzy search)", desc_style),
+        ]),
+        Line::from(vec![
             Span::styled("    Alt+d       ", key_style),
             Span::styled("Detach to dashboard", desc_style),
         ]),

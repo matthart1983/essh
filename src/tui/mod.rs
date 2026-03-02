@@ -1,3 +1,4 @@
+pub mod command_palette;
 pub mod dashboard;
 pub mod filebrowser_view;
 pub mod help;
@@ -98,6 +99,8 @@ pub struct App {
     pub port_forward_adding: bool,
     // File browser
     pub file_browser: Option<FileBrowser>,
+    // Command palette
+    pub command_palette: Option<command_palette::CommandPalette>,
 }
 
 impl App {
@@ -128,6 +131,7 @@ impl App {
             port_forward_input: String::new(),
             port_forward_adding: false,
             file_browser: None,
+            command_palette: None,
         }
     }
 
@@ -455,6 +459,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Help overlay (rendered on top of any view)
     if app.show_help {
         help::render(frame);
+    }
+
+    // Command palette overlay (rendered on top of everything)
+    if let Some(ref palette) = app.command_palette {
+        command_palette::render(frame, palette);
     }
 }
 

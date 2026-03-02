@@ -499,6 +499,7 @@ essh plugin install <name>          # Install a plugin
 | `Alt+w` | Close active session |
 | `Alt+h` | Toggle help overlay |
 | `Alt+r` | Rename active session tab |
+| `Ctrl+p` | Command palette (fuzzy finder for hosts, sessions, views) |
 | `q` | Quit (from dashboard) / no-op in session |
 | `?` | Help overlay (from Dashboard / Monitor views; passes through in session) |
 
@@ -598,6 +599,7 @@ essh/
     │   ├── filebrowser_view.rs # Two-pane file browser UI
     │   ├── portfwd_view.rs     # Port forwarding manager panel
     │   ├── help.rs             # Help overlay with keybinding reference
+    │   ├── command_palette.rs  # Fuzzy-matched command palette overlay (Ctrl+P)
     │   └── widgets.rs          # Sparklines, bar gauges, format helpers
     └── cli/
         └── mod.rs              # CLI argument definitions (clap derive)
@@ -675,6 +677,10 @@ Wire up the existing `AuthMethod::Agent` variant to discover keys from the local
 ### 13.10 Live Fleet Health Dashboard ✅
 
 **Implemented.** The Fleet tab now runs periodic background TCP probes against all hosts, updating `●Online` / `●Offline` status in real-time. Each host shows colour-coded latency (green < 50 ms, yellow < 200 ms, red ≥ 200 ms) and a 16-column sparkline history. The summary bar shows fleet-wide availability percentage with a colour-coded gauge. Configurable via `[fleet]` in config: `probe_interval` (default 60 s), `probe_timeout` (default 5 s), `probe_enabled` (default true), `latency_history_samples` (default 30). Probes run concurrently via `tokio::spawn` to avoid blocking the event loop.
+
+### 13.11 Command Palette ✅
+
+**Implemented.** Press `Ctrl+p` from any view to open a fuzzy-matched command palette overlay. The palette provides instant access to hosts, active sessions, views, dashboard tabs, and actions. Type to filter entries — multi-word queries match independently with prefix and word-boundary bonuses for more intuitive ranking. Navigate with `↑`/`↓`, execute with `Enter`, dismiss with `Esc`. Available entry categories: **Hosts** (connect to a cached host), **Sessions** (switch to an active session), **Views** (Dashboard, Monitor, Port Forwarding, File Browser), **Dashboard Tabs** (Sessions, Hosts, Fleet, Config), **Actions** (Toggle Split Pane, Toggle Help). The palette renders as a centered overlay with Netwatch-style Cyan/Yellow/DarkGray theming, showing up to 12 matched results with category labels.
 
 ---
 

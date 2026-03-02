@@ -382,6 +382,8 @@ fn render_footer(
         Span::raw(":Refresh  "),
         Span::styled("d", Style::default().fg(Color::Cyan)),
         Span::raw(":Delete  "),
+        Span::styled("Ctrl+p", Style::default().fg(Color::Cyan)),
+        Span::raw(":Palette  "),
         Span::styled("q", Style::default().fg(Color::Cyan)),
         Span::raw(":Quit"),
     ]));
