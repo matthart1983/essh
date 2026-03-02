@@ -41,89 +41,16 @@ Sleep 2.5s
 # Sessions tab (default) — let viewer take it in
 Sleep 1.5s
 
-# ── Hosts tab ─────────────────────────────────────────────────────────
+# ── Hosts tab — filter straight to localhost ──────────────────────────
 Type "2"
-Sleep 2s
-
-# Browse the host list
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Down
-Sleep 400ms
-Down
-Sleep 800ms
-
-# Back to top
-Up
-Sleep 300ms
-Up
-Sleep 300ms
-Up
-Sleep 300ms
-Up
-Sleep 300ms
-Up
-Sleep 300ms
-Up
-Sleep 300ms
-Up
-Sleep 300ms
-Up
 Sleep 1.5s
 
-# ── Search / filter: "prod" ──────────────────────────────────────────
-Type "/"
-Sleep 500ms
-Type@100ms "prod"
-Sleep 2s
-Escape
-Sleep 800ms
-
-# Search again: "web"
-Type "/"
-Sleep 400ms
-Type@100ms "web"
-Sleep 1.5s
-Escape
-Sleep 1s
-
-# ══════════════════════════════════════════════════════════════════════
-#  ACT 2: Fleet Health Dashboard
-# ══════════════════════════════════════════════════════════════════════
-
-Type "3"
-Sleep 5s
-
-# Let probes run — fleet health should update
-Sleep 3s
-
-# ══════════════════════════════════════════════════════════════════════
-#  ACT 3: Config tab (quick look)
-# ══════════════════════════════════════════════════════════════════════
-
-Type "4"
-Sleep 2s
-
-# ══════════════════════════════════════════════════════════════════════
-#  ACT 4: Connect to localhost — real SSH
-# ══════════════════════════════════════════════════════════════════════
-
-Type "2"
-Sleep 800ms
 Type "/"
 Sleep 400ms
 Type@90ms "local"
-Sleep 800ms
+Sleep 1.5s
+
+# Connect
 Enter
 Sleep 3.5s
 
