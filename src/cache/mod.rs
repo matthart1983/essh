@@ -182,8 +182,8 @@ impl CacheDb {
         for row in rows {
             let (id, hostname, ip, port, fingerprint, key_type, first_seen, last_seen, tags_json) =
                 row?;
-            let tags: HashMap<String, String> = serde_json::from_str(&tags_json)
-                .map_err(CacheError::Json)?;
+            let tags: HashMap<String, String> =
+                serde_json::from_str(&tags_json).map_err(CacheError::Json)?;
             hosts.push(CachedHost {
                 id,
                 hostname,
@@ -207,11 +207,7 @@ impl CacheDb {
         Ok(affected > 0)
     }
 
-    pub fn find_hosts_by_tag(
-        &self,
-        key: &str,
-        value: &str,
-    ) -> Result<Vec<CachedHost>, CacheError> {
+    pub fn find_hosts_by_tag(&self, key: &str, value: &str) -> Result<Vec<CachedHost>, CacheError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, hostname, ip, port, fingerprint, key_type, first_seen, last_seen, tags
              FROM known_hosts
@@ -237,8 +233,8 @@ impl CacheDb {
         for row in rows {
             let (id, hostname, ip, port, fingerprint, key_type, first_seen, last_seen, tags_json) =
                 row?;
-            let tags: HashMap<String, String> = serde_json::from_str(&tags_json)
-                .map_err(CacheError::Json)?;
+            let tags: HashMap<String, String> =
+                serde_json::from_str(&tags_json).map_err(CacheError::Json)?;
             hosts.push(CachedHost {
                 id,
                 hostname,
@@ -311,10 +307,9 @@ impl CacheDb {
     }
 
     pub fn remove_key(&self, name: &str) -> Result<bool, CacheError> {
-        let affected = self.conn.execute(
-            "DELETE FROM user_keys WHERE name = ?1",
-            params![name],
-        )?;
+        let affected = self
+            .conn
+            .execute("DELETE FROM user_keys WHERE name = ?1", params![name])?;
         Ok(affected > 0)
     }
 }
@@ -341,10 +336,18 @@ mod tests {
     #[test]
     fn test_trust_and_check_host_key() {
         let db = test_db();
-        db.trust_host("example.com", Some("1.2.3.4"), 22, "sha256:abc123", "ed25519")
-            .unwrap();
+        db.trust_host(
+            "example.com",
+            Some("1.2.3.4"),
+            22,
+            "sha256:abc123",
+            "ed25519",
+        )
+        .unwrap();
 
-        let status = db.check_host_key("example.com", 22, "sha256:abc123").unwrap();
+        let status = db
+            .check_host_key("example.com", 22, "sha256:abc123")
+            .unwrap();
         assert!(matches!(status, HostKeyStatus::Trusted));
     }
 
@@ -358,11 +361,17 @@ mod tests {
     #[test]
     fn test_host_key_changed() {
         let db = test_db();
-        db.trust_host("example.com", None, 22, "sha256:old_fp", "rsa").unwrap();
+        db.trust_host("example.com", None, 22, "sha256:old_fp", "rsa")
+            .unwrap();
 
-        let status = db.check_host_key("example.com", 22, "sha256:new_fp").unwrap();
+        let status = db
+            .check_host_key("example.com", 22, "sha256:new_fp")
+            .unwrap();
         match status {
-            HostKeyStatus::Changed { old_fingerprint, old_last_seen } => {
+            HostKeyStatus::Changed {
+                old_fingerprint,
+                old_last_seen,
+            } => {
                 assert_eq!(old_fingerprint, "sha256:old_fp");
                 assert!(!old_last_seen.is_empty());
             }
@@ -373,9 +382,12 @@ mod tests {
     #[test]
     fn test_list_hosts() {
         let db = test_db();
-        db.trust_host("alpha.com", None, 22, "fp1", "ed25519").unwrap();
-        db.trust_host("beta.com", Some("10.0.0.1"), 2222, "fp2", "rsa").unwrap();
-        db.trust_host("gamma.com", None, 22, "fp3", "ed25519").unwrap();
+        db.trust_host("alpha.com", None, 22, "fp1", "ed25519")
+            .unwrap();
+        db.trust_host("beta.com", Some("10.0.0.1"), 2222, "fp2", "rsa")
+            .unwrap();
+        db.trust_host("gamma.com", None, 22, "fp3", "ed25519")
+            .unwrap();
 
         let hosts = db.list_hosts().unwrap();
         assert_eq!(hosts.len(), 3);
@@ -388,7 +400,8 @@ mod tests {
     #[test]
     fn test_remove_host() {
         let db = test_db();
-        db.trust_host("remove-me.com", None, 22, "fp", "rsa").unwrap();
+        db.trust_host("remove-me.com", None, 22, "fp", "rsa")
+            .unwrap();
         assert_eq!(db.list_hosts().unwrap().len(), 1);
 
         let removed = db.remove_host("remove-me.com", 22).unwrap();
@@ -402,7 +415,8 @@ mod tests {
     #[test]
     fn test_update_last_seen() {
         let db = test_db();
-        db.trust_host("seen.com", None, 22, "fp", "ed25519").unwrap();
+        db.trust_host("seen.com", None, 22, "fp", "ed25519")
+            .unwrap();
 
         let before = db.list_hosts().unwrap();
         let last_seen_before = before[0].last_seen.clone();
@@ -418,7 +432,8 @@ mod tests {
     #[test]
     fn test_host_tags() {
         let db = test_db();
-        db.trust_host("tagged.com", None, 22, "fp", "ed25519").unwrap();
+        db.trust_host("tagged.com", None, 22, "fp", "ed25519")
+            .unwrap();
 
         let mut tags = HashMap::new();
         tags.insert("env".to_string(), "production".to_string());
@@ -454,8 +469,13 @@ mod tests {
     #[test]
     fn test_add_key() {
         let db = test_db();
-        db.add_key("my-key", "/home/user/.ssh/id_ed25519", "ed25519", "sha256:keyprint")
-            .unwrap();
+        db.add_key(
+            "my-key",
+            "/home/user/.ssh/id_ed25519",
+            "ed25519",
+            "sha256:keyprint",
+        )
+        .unwrap();
 
         let keys = db.list_keys().unwrap();
         assert_eq!(keys.len(), 1);
@@ -483,7 +503,8 @@ mod tests {
     fn test_add_key_upsert() {
         let db = test_db();
         db.add_key("dup-key", "/old/path", "rsa", "old_fp").unwrap();
-        db.add_key("dup-key", "/new/path", "ed25519", "new_fp").unwrap();
+        db.add_key("dup-key", "/new/path", "ed25519", "new_fp")
+            .unwrap();
 
         let keys = db.list_keys().unwrap();
         assert_eq!(keys.len(), 1);
@@ -495,8 +516,10 @@ mod tests {
     #[test]
     fn test_trust_host_upsert() {
         let db = test_db();
-        db.trust_host("dup.com", Some("1.1.1.1"), 22, "fp1", "rsa").unwrap();
-        db.trust_host("dup.com", Some("2.2.2.2"), 22, "fp2", "ed25519").unwrap();
+        db.trust_host("dup.com", Some("1.1.1.1"), 22, "fp1", "rsa")
+            .unwrap();
+        db.trust_host("dup.com", Some("2.2.2.2"), 22, "fp2", "ed25519")
+            .unwrap();
 
         let hosts = db.list_hosts().unwrap();
         assert_eq!(hosts.len(), 1);

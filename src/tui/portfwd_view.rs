@@ -86,7 +86,10 @@ pub fn render(f: &mut Frame, manager: &PortForwardManager, input: &str, adding: 
     if adding {
         let input_line = Paragraph::new(Line::from(vec![
             Span::styled("Format: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("L:bind_port:target_host:target_port  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "L:bind_port:target_host:target_port  ",
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled("> ", Style::default().fg(Color::Cyan)),
             Span::raw(input),
             Span::styled("█", Style::default().fg(Color::Cyan)),

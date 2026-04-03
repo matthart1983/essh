@@ -12,8 +12,8 @@ use crate::session::Session;
 
 #[derive(Clone, Debug)]
 pub enum PaletteAction {
-    ConnectHost(usize),          // index into app.hosts
-    SwitchSession(usize),        // index into session_manager.sessions
+    ConnectHost(usize),   // index into app.hosts
+    SwitchSession(usize), // index into session_manager.sessions
     SetView(AppView),
     SetDashboardTab(DashboardTab),
     ToggleSplitPane,
@@ -53,12 +53,7 @@ impl CommandPalette {
     }
 
     /// Rebuild the entry list based on current query, hosts, and sessions.
-    pub fn update(
-        &mut self,
-        hosts: &[HostDisplay],
-        sessions: &[Session],
-        has_sessions: bool,
-    ) {
+    pub fn update(&mut self, hosts: &[HostDisplay], sessions: &[Session], has_sessions: bool) {
         let mut entries = Vec::new();
 
         // Hosts — "connect <name>"
@@ -70,8 +65,18 @@ impl CommandPalette {
             };
             entries.push(PaletteEntry {
                 icon: "🖥",
-                label: format!("Connect: {}", if host.name.is_empty() { &host.hostname } else { &host.name }),
-                detail: format!("{} {}@{}:{} {}", status, host.user, host.hostname, host.port, host.tags),
+                label: format!(
+                    "Connect: {}",
+                    if host.name.is_empty() {
+                        &host.hostname
+                    } else {
+                        &host.name
+                    }
+                ),
+                detail: format!(
+                    "{} {}@{}:{} {}",
+                    status, host.user, host.hostname, host.port, host.tags
+                ),
                 action: PaletteAction::ConnectHost(i),
                 score: 0,
             });
@@ -82,7 +87,10 @@ impl CommandPalette {
             entries.push(PaletteEntry {
                 icon: "⚡",
                 label: format!("Session {}: {}", i + 1, session.label),
-                detail: format!("{}@{}:{} — {}", session.username, session.hostname, session.port, session.state),
+                detail: format!(
+                    "{}@{}:{} — {}",
+                    session.username, session.hostname, session.port, session.state
+                ),
                 action: PaletteAction::SwitchSession(i),
                 score: 0,
             });
@@ -221,7 +229,7 @@ fn fuzzy_score(query: &str, label: &str, detail: &str) -> i32 {
             word_matched = true;
         }
 
-        if let Some(_) = detail_lower.find(word) {
+        if detail_lower.find(word).is_some() {
             score += 3;
             word_matched = true;
         }
@@ -298,7 +306,11 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette) {
         let row_area = Rect::new(inner.x, row_y, inner.width, 1);
 
         let is_selected = ei == palette.selected;
-        let bg = if is_selected { Color::DarkGray } else { Color::Reset };
+        let bg = if is_selected {
+            Color::DarkGray
+        } else {
+            Color::Reset
+        };
         let label_style = if is_selected {
             Style::default().fg(Color::Yellow).bold().bg(bg)
         } else {
@@ -345,7 +357,10 @@ mod tests {
 
     #[test]
     fn test_fuzzy_score_no_match() {
-        assert_eq!(fuzzy_score("zzzzz", "Connect: bastion", "ops@bastion:22"), 0);
+        assert_eq!(
+            fuzzy_score("zzzzz", "Connect: bastion", "ops@bastion:22"),
+            0
+        );
     }
 
     #[test]
@@ -356,7 +371,10 @@ mod tests {
 
     #[test]
     fn test_fuzzy_score_multi_word_no_match() {
-        assert_eq!(fuzzy_score("connect zzz", "Connect: bastion", "ops@bastion:22"), 0);
+        assert_eq!(
+            fuzzy_score("connect zzz", "Connect: bastion", "ops@bastion:22"),
+            0
+        );
     }
 
     #[test]

@@ -122,11 +122,7 @@ impl SessionMetrics {
 
 impl DiagnosticsEngine {
     pub fn new(session_id: &str, hostname: &str, port: u16, log_dir: Option<&Path>) -> Self {
-        let metrics = SessionMetrics::new(
-            session_id.to_string(),
-            hostname.to_string(),
-            port,
-        );
+        let metrics = SessionMetrics::new(session_id.to_string(), hostname.to_string(), port);
         let log_file = log_dir.map(|dir| dir.join(format!("{}.jsonl", session_id)));
 
         Self {
@@ -215,12 +211,8 @@ impl DiagnosticsEngine {
         let snapshot = self.snapshot().await;
 
         if let Some(ref path) = self.log_file {
-            let line = serde_json::to_string(&snapshot)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)?;
+            let line = serde_json::to_string(&snapshot).map_err(std::io::Error::other)?;
+            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
             writeln!(file, "{}", line)?;
         }
 

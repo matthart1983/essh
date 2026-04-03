@@ -8,16 +8,16 @@ pub mod session_view;
 pub mod widgets;
 
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout},
     widgets::TableState,
+    Frame,
 };
 
-use crate::filetransfer::FileBrowser;
-use crate::session::manager::SessionManager;
-use crate::monitor::{HostMetrics, history::MetricHistory};
 use crate::diagnostics::DiagnosticsSnapshot;
+use crate::filetransfer::FileBrowser;
+use crate::monitor::{history::MetricHistory, HostMetrics};
 use crate::portfwd::PortForwardManager;
+use crate::session::manager::SessionManager;
 
 pub struct Notification {
     pub session_label: String,
@@ -216,10 +216,14 @@ impl App {
     pub fn add_session_tracking(&mut self, history_samples: usize) {
         self.session_diagnostics.push(None);
         self.session_metrics.push(None);
-        self.session_cpu_history.push(MetricHistory::new(history_samples));
-        self.session_mem_history.push(MetricHistory::new(history_samples));
-        self.session_net_rx_history.push(MetricHistory::new(history_samples));
-        self.session_net_tx_history.push(MetricHistory::new(history_samples));
+        self.session_cpu_history
+            .push(MetricHistory::new(history_samples));
+        self.session_mem_history
+            .push(MetricHistory::new(history_samples));
+        self.session_net_rx_history
+            .push(MetricHistory::new(history_samples));
+        self.session_net_tx_history
+            .push(MetricHistory::new(history_samples));
         self.port_forward_managers.push(PortForwardManager::new());
     }
 
@@ -262,7 +266,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(3),  // tab bar
+                        Constraint::Length(3), // tab bar
                         Constraint::Min(4),    // terminal (or terminal + monitor split)
                         Constraint::Length(2), // status bar
                         Constraint::Length(2), // footer
@@ -297,20 +301,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     }
 
                     // Render host monitor in the right pane
-                    let metrics = app.session_metrics.get(active_idx)
+                    let metrics = app
+                        .session_metrics
+                        .get(active_idx)
                         .and_then(|m| m.as_ref())
                         .cloned()
                         .unwrap_or_default();
-                    let cpu_hist = app.session_cpu_history.get(active_idx)
+                    let cpu_hist = app
+                        .session_cpu_history
+                        .get(active_idx)
                         .cloned()
                         .unwrap_or_else(|| MetricHistory::new(60));
-                    let mem_hist = app.session_mem_history.get(active_idx)
+                    let mem_hist = app
+                        .session_mem_history
+                        .get(active_idx)
                         .cloned()
                         .unwrap_or_else(|| MetricHistory::new(60));
-                    let rx_hist = app.session_net_rx_history.get(active_idx)
+                    let rx_hist = app
+                        .session_net_rx_history
+                        .get(active_idx)
                         .cloned()
                         .unwrap_or_else(|| MetricHistory::new(60));
-                    let tx_hist = app.session_net_tx_history.get(active_idx)
+                    let tx_hist = app
+                        .session_net_tx_history
+                        .get(active_idx)
                         .cloned()
                         .unwrap_or_else(|| MetricHistory::new(60));
 
@@ -338,8 +352,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 }
 
                 if let Some(session) = app.session_manager.sessions.get(active_idx) {
-                    let diag = app.session_diagnostics.get(active_idx).and_then(|d| d.as_ref());
-                    session_view::render_status_bar(frame, chunks[2], session, diag, app.port_forward_managers.get(active_idx));
+                    let diag = app
+                        .session_diagnostics
+                        .get(active_idx)
+                        .and_then(|d| d.as_ref());
+                    session_view::render_status_bar(
+                        frame,
+                        chunks[2],
+                        session,
+                        diag,
+                        app.port_forward_managers.get(active_idx),
+                    );
                 }
 
                 session_view::render_footer(frame, chunks[3]);
@@ -351,7 +374,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(3),  // tab bar
+                        Constraint::Length(3), // tab bar
                         Constraint::Min(10),   // monitor
                     ])
                     .split(area);
@@ -364,21 +387,31 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     &app.notifications,
                 );
 
-                let metrics = app.session_metrics.get(active_idx)
+                let metrics = app
+                    .session_metrics
+                    .get(active_idx)
                     .and_then(|m| m.as_ref())
                     .cloned()
                     .unwrap_or_default();
 
-                let cpu_hist = app.session_cpu_history.get(active_idx)
+                let cpu_hist = app
+                    .session_cpu_history
+                    .get(active_idx)
                     .cloned()
                     .unwrap_or_else(|| MetricHistory::new(60));
-                let mem_hist = app.session_mem_history.get(active_idx)
+                let mem_hist = app
+                    .session_mem_history
+                    .get(active_idx)
                     .cloned()
                     .unwrap_or_else(|| MetricHistory::new(60));
-                let rx_hist = app.session_net_rx_history.get(active_idx)
+                let rx_hist = app
+                    .session_net_rx_history
+                    .get(active_idx)
                     .cloned()
                     .unwrap_or_else(|| MetricHistory::new(60));
-                let tx_hist = app.session_net_tx_history.get(active_idx)
+                let tx_hist = app
+                    .session_net_tx_history
+                    .get(active_idx)
                     .cloned()
                     .unwrap_or_else(|| MetricHistory::new(60));
 
@@ -419,14 +452,28 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
                 if let Some(session) = app.session_manager.sessions.get(active_idx) {
                     session_view::render_terminal(frame, chunks[1], session);
-                    let diag = app.session_diagnostics.get(active_idx).and_then(|d| d.as_ref());
-                    session_view::render_status_bar(frame, chunks[2], session, diag, app.port_forward_managers.get(active_idx));
+                    let diag = app
+                        .session_diagnostics
+                        .get(active_idx)
+                        .and_then(|d| d.as_ref());
+                    session_view::render_status_bar(
+                        frame,
+                        chunks[2],
+                        session,
+                        diag,
+                        app.port_forward_managers.get(active_idx),
+                    );
                 }
                 session_view::render_footer(frame, chunks[3]);
 
                 // Port forward overlay
                 if let Some(mgr) = app.port_forward_managers.get(active_idx) {
-                    portfwd_view::render(frame, mgr, &app.port_forward_input, app.port_forward_adding);
+                    portfwd_view::render(
+                        frame,
+                        mgr,
+                        &app.port_forward_input,
+                        app.port_forward_adding,
+                    );
                 }
             }
         }
@@ -435,10 +482,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 let area = frame.area();
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3),
-                        Constraint::Min(6),
-                    ])
+                    .constraints([Constraint::Length(3), Constraint::Min(6)])
                     .split(area);
 
                 session_view::render_tab_bar(

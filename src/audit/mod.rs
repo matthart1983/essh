@@ -78,8 +78,7 @@ impl AuditLogger {
             .append(true)
             .open(&self.log_path)?;
 
-        let line = serde_json::to_string(event)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let line = serde_json::to_string(event).map_err(std::io::Error::other)?;
         writeln!(file, "{}", line)?;
 
         Ok(())
@@ -241,7 +240,10 @@ mod tests {
 
         let contents = stdfs::read_to_string(&path).unwrap();
         let parsed: AuditEvent = serde_json::from_str(contents.trim()).unwrap();
-        assert!(matches!(parsed.event_type, AuditEventType::ConnectionEstablished));
+        assert!(matches!(
+            parsed.event_type,
+            AuditEventType::ConnectionEstablished
+        ));
         stdfs::remove_file(&path).ok();
     }
 
@@ -249,7 +251,9 @@ mod tests {
     fn test_audit_logger_appends() {
         let path = temp_log_path();
         let logger = AuditLogger::new(path.clone(), true);
-        logger.log(&make_event(AuditEventType::SessionStart)).unwrap();
+        logger
+            .log(&make_event(AuditEventType::SessionStart))
+            .unwrap();
         logger.log(&make_event(AuditEventType::SessionEnd)).unwrap();
 
         let contents = stdfs::read_to_string(&path).unwrap();
@@ -298,7 +302,13 @@ mod tests {
     fn test_log_host_key_event() {
         let path = temp_log_path();
         let logger = AuditLogger::new(path.clone(), true);
-        logger.log_host_key_event("s1", "host.example.com", 22, AuditEventType::HostKeyVerified, "SHA256:abc123");
+        logger.log_host_key_event(
+            "s1",
+            "host.example.com",
+            22,
+            AuditEventType::HostKeyVerified,
+            "SHA256:abc123",
+        );
 
         let contents = stdfs::read_to_string(&path).unwrap();
         let v: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
@@ -312,7 +322,9 @@ mod tests {
         let path = temp_log_path();
         let logger = AuditLogger::new(path.clone(), true);
         for _ in 0..5 {
-            logger.log(&make_event(AuditEventType::CommandExecuted)).unwrap();
+            logger
+                .log(&make_event(AuditEventType::CommandExecuted))
+                .unwrap();
         }
 
         let events = logger.tail(3).unwrap();
@@ -324,7 +336,9 @@ mod tests {
     fn test_tail_more_than_available() {
         let path = temp_log_path();
         let logger = AuditLogger::new(path.clone(), true);
-        logger.log(&make_event(AuditEventType::SessionStart)).unwrap();
+        logger
+            .log(&make_event(AuditEventType::SessionStart))
+            .unwrap();
         logger.log(&make_event(AuditEventType::SessionEnd)).unwrap();
 
         let events = logger.tail(10).unwrap();

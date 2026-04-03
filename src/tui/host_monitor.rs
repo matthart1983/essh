@@ -1,10 +1,10 @@
+use crate::monitor::history::MetricHistory;
+use crate::monitor::HostMetrics;
+use crate::tui::widgets;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
-use crate::monitor::HostMetrics;
-use crate::monitor::history::MetricHistory;
-use crate::tui::widgets;
 
 pub enum ProcessSort {
     Cpu,
@@ -12,6 +12,7 @@ pub enum ProcessSort {
 }
 
 /// Render the host monitor overlay (replaces terminal when active)
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     f: &mut Frame,
     area: Rect,
@@ -39,7 +40,8 @@ pub fn render(
     let proc_data = match sort {
         ProcessSort::Cpu => metrics.top_procs_cpu.len(),
         ProcessSort::Memory => metrics.top_procs_mem.len(),
-    }.min(15) as u16;
+    }
+    .min(15) as u16;
     let desired_disk = disk_data + 2; // +1 header +1 border
 
     let disk_height = desired_disk.min(available);
@@ -47,13 +49,13 @@ pub fn render(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),            // CPU: 2 content + 1 border
-            Constraint::Length(3),            // Memory: 2 content + 1 border
-            Constraint::Length(2),            // Load: 1 content + 1 border
-            Constraint::Length(disk_height),  // Disk table (adaptive, includes border)
-            Constraint::Length(2),            // Net: 1 content + 1 border
+            Constraint::Length(3),           // CPU: 2 content + 1 border
+            Constraint::Length(3),           // Memory: 2 content + 1 border
+            Constraint::Length(2),           // Load: 1 content + 1 border
+            Constraint::Length(disk_height), // Disk table (adaptive, includes border)
+            Constraint::Length(2),           // Net: 1 content + 1 border
             Constraint::Min(proc_data + 1),  // Processes (fills remaining space)
-            Constraint::Length(1),            // Footer
+            Constraint::Length(1),           // Footer
         ])
         .split(inner);
 
@@ -75,7 +77,10 @@ fn render_cpu(f: &mut Frame, area: Rect, metrics: &HostMetrics, history: &Metric
     let bar = widgets::bar_gauge(metrics.cpu_percent, cpu_bar_width);
 
     // Per-core summary inline
-    let core_summary: String = metrics.cpu_per_core.iter().enumerate()
+    let core_summary: String = metrics
+        .cpu_per_core
+        .iter()
+        .enumerate()
         .take(8)
         .map(|(i, &pct)| format!("C{}:{:.0}%", i, pct))
         .collect::<Vec<_>>()
@@ -84,12 +89,21 @@ fn render_cpu(f: &mut Frame, area: Rect, metrics: &HostMetrics, history: &Metric
     let lines = vec![
         Line::from(vec![
             Span::styled(" CPU  ", Style::default().fg(Color::Cyan).bold()),
-            Span::styled(format!("{:5.1}%  ", metrics.cpu_percent), Style::default().fg(widgets::pct_color(metrics.cpu_percent))),
-            Span::styled(spark_str, Style::default().fg(widgets::pct_color(metrics.cpu_percent))),
+            Span::styled(
+                format!("{:5.1}%  ", metrics.cpu_percent),
+                Style::default().fg(widgets::pct_color(metrics.cpu_percent)),
+            ),
+            Span::styled(
+                spark_str,
+                Style::default().fg(widgets::pct_color(metrics.cpu_percent)),
+            ),
         ]),
         Line::from(vec![
             Span::raw("      "),
-            Span::styled(bar, Style::default().fg(widgets::pct_color(metrics.cpu_percent))),
+            Span::styled(
+                bar,
+                Style::default().fg(widgets::pct_color(metrics.cpu_percent)),
+            ),
             Span::raw(format!(" {:.0}%  ", metrics.cpu_percent)),
             Span::styled(core_summary, Style::default().fg(Color::DarkGray)),
         ]),
@@ -115,14 +129,19 @@ fn render_memory(f: &mut Frame, area: Rect, metrics: &HostMetrics, history: &Met
     let sparkline_width = (area.width as usize).saturating_sub(16);
     let spark_str = widgets::sparkline_string(&mem_data, sparkline_width);
 
-    let swap_text = format!("  Swap: {} / {}",
+    let swap_text = format!(
+        "  Swap: {} / {}",
         widgets::format_kb(metrics.mem_swap_used_kb),
-        widgets::format_kb(metrics.mem_swap_total_kb));
+        widgets::format_kb(metrics.mem_swap_total_kb)
+    );
 
     let lines = vec![
         Line::from(vec![
             Span::styled(" MEM  ", Style::default().fg(Color::Cyan).bold()),
-            Span::styled(format!("{:5.1}%  ", mem_pct), Style::default().fg(widgets::pct_color(mem_pct))),
+            Span::styled(
+                format!("{:5.1}%  ", mem_pct),
+                Style::default().fg(widgets::pct_color(mem_pct)),
+            ),
             Span::styled(spark_str, Style::default().fg(widgets::pct_color(mem_pct))),
         ]),
         Line::from(vec![
@@ -142,7 +161,10 @@ fn render_load(f: &mut Frame, area: Rect, metrics: &HostMetrics) {
     let uptime = widgets::format_uptime(metrics.uptime_secs);
     let line = Line::from(vec![
         Span::styled(" LOAD ", Style::default().fg(Color::Cyan).bold()),
-        Span::raw(format!("{:.2}  {:.2}  {:.2}", metrics.load_1m, metrics.load_5m, metrics.load_15m)),
+        Span::raw(format!(
+            "{:.2}  {:.2}  {:.2}",
+            metrics.load_1m, metrics.load_5m, metrics.load_15m
+        )),
         Span::raw("    "),
         Span::styled("UP ", Style::default().fg(Color::Cyan).bold()),
         Span::raw(uptime),
@@ -161,20 +183,26 @@ fn render_disks(f: &mut Frame, area: Rect, metrics: &HostMetrics) {
         Cell::from("Used").style(Style::default().fg(Color::DarkGray)),
         Cell::from("Avail").style(Style::default().fg(Color::DarkGray)),
         Cell::from("Use%").style(Style::default().fg(Color::DarkGray)),
-    ]).height(1);
+    ])
+    .height(1);
 
     let max_rows = area.height.saturating_sub(2) as usize; // subtract header + bottom border
-    let rows: Vec<Row> = metrics.disks.iter().take(max_rows.min(15)).map(|disk| {
-        let avail = disk.total_bytes.saturating_sub(disk.used_bytes);
-        let bar = widgets::bar_gauge(disk.use_pct, 10);
-        Row::new(vec![
-            Cell::from(format!(" {}", disk.mount)),
-            Cell::from(widgets::format_bytes(disk.used_bytes)),
-            Cell::from(widgets::format_bytes(avail)),
-            Cell::from(format!("{} {:.0}%", bar, disk.use_pct))
-                .style(Style::default().fg(widgets::pct_color(disk.use_pct))),
-        ])
-    }).collect();
+    let rows: Vec<Row> = metrics
+        .disks
+        .iter()
+        .take(max_rows.min(15))
+        .map(|disk| {
+            let avail = disk.total_bytes.saturating_sub(disk.used_bytes);
+            let bar = widgets::bar_gauge(disk.use_pct, 10);
+            Row::new(vec![
+                Cell::from(format!(" {}", disk.mount)),
+                Cell::from(widgets::format_bytes(disk.used_bytes)),
+                Cell::from(widgets::format_bytes(avail)),
+                Cell::from(format!("{} {:.0}%", bar, disk.use_pct))
+                    .style(Style::default().fg(widgets::pct_color(disk.use_pct))),
+            ])
+        })
+        .collect();
 
     let widths = [
         Constraint::Min(14),
@@ -190,7 +218,13 @@ fn render_disks(f: &mut Frame, area: Rect, metrics: &HostMetrics) {
     f.render_widget(table, area);
 }
 
-fn render_network(f: &mut Frame, area: Rect, metrics: &HostMetrics, rx_history: &MetricHistory, tx_history: &MetricHistory) {
+fn render_network(
+    f: &mut Frame,
+    area: Rect,
+    metrics: &HostMetrics,
+    rx_history: &MetricHistory,
+    tx_history: &MetricHistory,
+) {
     let spark_width = (area.width as usize / 2).saturating_sub(16);
     let rx_data = rx_history.as_slice_vec();
     let tx_data = tx_history.as_slice_vec();
@@ -201,10 +235,16 @@ fn render_network(f: &mut Frame, area: Rect, metrics: &HostMetrics, rx_history: 
         Span::styled(" NET  ", Style::default().fg(Color::Cyan).bold()),
         Span::styled("RX ", Style::default().fg(Color::Green)),
         Span::styled(rx_spark, Style::default().fg(Color::Green)),
-        Span::raw(format!(" {}  ", widgets::format_bytes_rate(metrics.net_rx_bps))),
+        Span::raw(format!(
+            " {}  ",
+            widgets::format_bytes_rate(metrics.net_rx_bps)
+        )),
         Span::styled("TX ", Style::default().fg(Color::Yellow)),
         Span::styled(tx_spark, Style::default().fg(Color::Yellow)),
-        Span::raw(format!(" {}", widgets::format_bytes_rate(metrics.net_tx_bps))),
+        Span::raw(format!(
+            " {}",
+            widgets::format_bytes_rate(metrics.net_tx_bps)
+        )),
     ]);
 
     let block = Block::default()
@@ -214,7 +254,13 @@ fn render_network(f: &mut Frame, area: Rect, metrics: &HostMetrics, rx_history: 
     f.render_widget(paragraph, area);
 }
 
-fn render_processes(f: &mut Frame, area: Rect, metrics: &HostMetrics, sort: &ProcessSort, scroll: usize) {
+fn render_processes(
+    f: &mut Frame,
+    area: Rect,
+    metrics: &HostMetrics,
+    sort: &ProcessSort,
+    scroll: usize,
+) {
     let procs = match sort {
         ProcessSort::Cpu => &metrics.top_procs_cpu,
         ProcessSort::Memory => &metrics.top_procs_mem,
@@ -232,18 +278,26 @@ fn render_processes(f: &mut Frame, area: Rect, metrics: &HostMetrics, sort: &Pro
         Cell::from("CPU%").style(Style::default().fg(Color::DarkGray)),
         Cell::from("MEM%").style(Style::default().fg(Color::DarkGray)),
         Cell::from("RSS").style(Style::default().fg(Color::DarkGray)),
-    ]).height(1);
+    ])
+    .height(1);
 
     let max_rows = area.height.saturating_sub(1) as usize; // subtract header
-    let rows: Vec<Row> = procs.iter().skip(scroll).take(max_rows.min(15)).map(|p| {
-        Row::new(vec![
-            Cell::from(format!(" {}", p.pid)),
-            Cell::from(p.name.chars().take(30).collect::<String>()),
-            Cell::from(format!("{:.1}", p.cpu_pct)).style(Style::default().fg(widgets::pct_color(p.cpu_pct))),
-            Cell::from(format!("{:.1}", p.mem_pct)).style(Style::default().fg(widgets::pct_color(p.mem_pct))),
-            Cell::from(widgets::format_kb(p.mem_rss_kb)),
-        ])
-    }).collect();
+    let rows: Vec<Row> = procs
+        .iter()
+        .skip(scroll)
+        .take(max_rows.min(15))
+        .map(|p| {
+            Row::new(vec![
+                Cell::from(format!(" {}", p.pid)),
+                Cell::from(p.name.chars().take(30).collect::<String>()),
+                Cell::from(format!("{:.1}", p.cpu_pct))
+                    .style(Style::default().fg(widgets::pct_color(p.cpu_pct))),
+                Cell::from(format!("{:.1}", p.mem_pct))
+                    .style(Style::default().fg(widgets::pct_color(p.mem_pct))),
+                Cell::from(widgets::format_kb(p.mem_rss_kb)),
+            ])
+        })
+        .collect();
 
     let widths = [
         Constraint::Length(8),

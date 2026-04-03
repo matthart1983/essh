@@ -107,7 +107,9 @@ impl FileBrowser {
             });
         }
         entries.sort_by(|a, b| {
-            b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         self.local_files = entries;
         if self.local_selected >= self.local_files.len() {
@@ -294,9 +296,24 @@ mod tests {
     fn test_navigation_next_prev_wrap() {
         let mut browser = FileBrowser::new();
         browser.local_files = vec![
-            LocalFileEntry { name: "a".into(), path: PathBuf::from("/a"), is_dir: false, size: 0 },
-            LocalFileEntry { name: "b".into(), path: PathBuf::from("/b"), is_dir: false, size: 0 },
-            LocalFileEntry { name: "c".into(), path: PathBuf::from("/c"), is_dir: false, size: 0 },
+            LocalFileEntry {
+                name: "a".into(),
+                path: PathBuf::from("/a"),
+                is_dir: false,
+                size: 0,
+            },
+            LocalFileEntry {
+                name: "b".into(),
+                path: PathBuf::from("/b"),
+                is_dir: false,
+                size: 0,
+            },
+            LocalFileEntry {
+                name: "c".into(),
+                path: PathBuf::from("/c"),
+                is_dir: false,
+                size: 0,
+            },
         ];
         browser.focus = FilePaneFocus::Local;
         browser.local_selected = 0;
@@ -318,8 +335,20 @@ mod tests {
     fn test_navigation_remote_pane() {
         let mut browser = FileBrowser::new();
         browser.remote_files = vec![
-            RemoteFileEntry { name: "x".into(), is_dir: false, size: 10, permissions: "-rw-r--r--".into(), modified: "Jan 1 00:00".into() },
-            RemoteFileEntry { name: "y".into(), is_dir: false, size: 20, permissions: "-rw-r--r--".into(), modified: "Jan 1 00:00".into() },
+            RemoteFileEntry {
+                name: "x".into(),
+                is_dir: false,
+                size: 10,
+                permissions: "-rw-r--r--".into(),
+                modified: "Jan 1 00:00".into(),
+            },
+            RemoteFileEntry {
+                name: "y".into(),
+                is_dir: false,
+                size: 20,
+                permissions: "-rw-r--r--".into(),
+                modified: "Jan 1 00:00".into(),
+            },
         ];
         browser.focus = FilePaneFocus::Remote;
         browser.remote_selected = 0;
@@ -452,9 +481,13 @@ drwxr-xr-x 3 root root 4096 Jan  1 10:00 ..
     fn test_enter_dir_remote() {
         let mut browser = FileBrowser::new();
         browser.remote_path = "/home".to_string();
-        browser.remote_files = vec![
-            RemoteFileEntry { name: "user".into(), is_dir: true, size: 4096, permissions: "drwxr-xr-x".into(), modified: "Jan 1 10:00".into() },
-        ];
+        browser.remote_files = vec![RemoteFileEntry {
+            name: "user".into(),
+            is_dir: true,
+            size: 4096,
+            permissions: "drwxr-xr-x".into(),
+            modified: "Jan 1 10:00".into(),
+        }];
         browser.remote_selected = 0;
         browser.enter_dir_remote();
         assert_eq!(browser.remote_path, "/home/user");

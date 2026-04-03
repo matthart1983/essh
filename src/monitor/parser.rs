@@ -124,9 +124,10 @@ pub fn parse_df(raw: &str) -> Vec<DiskInfo> {
         }
 
         // Find the Capacity% column index (right-to-left, looks like "42%" or "100%")
-        let cap_idx = match parts.iter().rposition(|p| {
-            p.ends_with('%') && p.trim_end_matches('%').parse::<u64>().is_ok()
-        }) {
+        let cap_idx = match parts
+            .iter()
+            .rposition(|p| p.ends_with('%') && p.trim_end_matches('%').parse::<u64>().is_ok())
+        {
             Some(i) if i >= 3 => i, // need at least fs, blocks, used, avail before it
             _ => continue,
         };
@@ -147,8 +148,11 @@ pub fn parse_df(raw: &str) -> Vec<DiskInfo> {
         };
 
         // Skip pseudo-filesystems with no real storage
-        if fs_name == "none" || fs_name == "udev" || fs_name == "overlay"
-            || fs_name == "devfs" || fs_name.starts_with("map ")
+        if fs_name == "none"
+            || fs_name == "udev"
+            || fs_name == "overlay"
+            || fs_name == "devfs"
+            || fs_name.starts_with("map ")
         {
             continue;
         }
@@ -324,7 +328,10 @@ mod tests {
         assert_eq!(disks[1].mount, "/System/Volumes/Data");
         assert!((disks[1].use_pct - 42.0).abs() < 0.1);
         // Filesystem with space in name
-        assert_eq!(disks[2].mount, "/private/var/folders/6c/T/AppTranslocation/foo");
+        assert_eq!(
+            disks[2].mount,
+            "/private/var/folders/6c/T/AppTranslocation/foo"
+        );
         assert!((disks[2].use_pct - 42.0).abs() < 0.1);
     }
 

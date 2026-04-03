@@ -60,7 +60,12 @@ pub struct SessionRecorder {
 impl SessionRecorder {
     /// Create a new recorder, writing to the given path.
     /// Writes the asciicast header immediately.
-    pub fn new(path: &Path, width: u32, height: u32, title: Option<String>) -> std::io::Result<Self> {
+    pub fn new(
+        path: &Path,
+        width: u32,
+        height: u32,
+        title: Option<String>,
+    ) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }

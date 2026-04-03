@@ -8,8 +8,13 @@ pub enum SessionState {
     Active,
     #[allow(dead_code)]
     Suspended,
-    Reconnecting { attempt: u32, max: u32 },
-    Disconnected { reason: String },
+    Reconnecting {
+        attempt: u32,
+        max: u32,
+    },
+    Disconnected {
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for SessionState {

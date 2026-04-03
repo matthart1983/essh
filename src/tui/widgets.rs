@@ -68,12 +68,20 @@ pub fn sparkline_string(data: &[u64], width: usize) -> String {
     }
 
     let max = *data.iter().max().unwrap_or(&1).max(&1);
-    let start = if data.len() > width { data.len() - width } else { 0 };
+    let start = if data.len() > width {
+        data.len() - width
+    } else {
+        0
+    };
     let visible = &data[start..];
 
     let mut result = String::with_capacity(width);
     for &val in visible {
-        let idx = if max == 0 { 0 } else { ((val as f64 / max as f64) * 7.0) as usize };
+        let idx = if max == 0 {
+            0
+        } else {
+            ((val as f64 / max as f64) * 7.0) as usize
+        };
         result.push(blocks[idx.min(7)]);
     }
     // Pad with spaces if not enough data

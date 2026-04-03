@@ -58,4 +58,5 @@ vt100 = "0.16"
 regex = "1"
 
 [dev-dependencies]
+ssh-key = { version = "0.6", features = ["ed25519", "getrandom"] }
 tempfile = "3"

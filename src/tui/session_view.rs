@@ -1,15 +1,21 @@
+use crate::diagnostics::DiagnosticsSnapshot;
+use crate::portfwd::PortForwardManager;
+use crate::session::{Session, SessionState};
+use crate::tui::widgets;
+use crate::tui::Notification;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph},
 };
-use crate::session::{Session, SessionState};
-use crate::diagnostics::DiagnosticsSnapshot;
-use crate::portfwd::PortForwardManager;
-use crate::tui::widgets;
-use crate::tui::Notification;
 
 /// Render the session tab bar at the top
-pub fn render_tab_bar(f: &mut Frame, area: Rect, sessions: &[Session], active_index: usize, notifications: &[Notification]) {
+pub fn render_tab_bar(
+    f: &mut Frame,
+    area: Rect,
+    sessions: &[Session],
+    active_index: usize,
+    notifications: &[Notification],
+) {
     let now = chrono::Local::now().format("%H:%M:%S").to_string();
     let mut spans: Vec<Span> = vec![
         Span::styled(" ESSH ", Style::default().fg(Color::Cyan).bold()),
@@ -17,9 +23,17 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, sessions: &[Session], active_in
     ];
 
     for (i, session) in sessions.iter().enumerate() {
-        let has_notifications = notifications.iter().any(|n| n.session_label == session.label);
+        let has_notifications = notifications
+            .iter()
+            .any(|n| n.session_label == session.label);
         if let SessionState::Reconnecting { attempt, max } = &session.state {
-            let label = format!("[{}] {} ● Recon. {}/{} ", i + 1, session.label, attempt, max);
+            let label = format!(
+                "[{}] {} ● Recon. {}/{} ",
+                i + 1,
+                session.label,
+                attempt,
+                max
+            );
             if i == active_index {
                 spans.push(Span::styled(label, Style::default().fg(Color::Red).bold()));
             } else {
@@ -35,12 +49,24 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, sessions: &[Session], active_in
         } else {
             let label = format!("[{}] {} ", i + 1, session.label);
             if i == active_index {
-                spans.push(Span::styled(label, Style::default().fg(Color::Yellow).bold()));
+                spans.push(Span::styled(
+                    label,
+                    Style::default().fg(Color::Yellow).bold(),
+                ));
             } else if has_notifications {
-                spans.push(Span::styled(label, Style::default().fg(Color::Cyan).underlined()));
-                spans.push(Span::styled("! ", Style::default().fg(Color::Yellow).bold()));
+                spans.push(Span::styled(
+                    label,
+                    Style::default().fg(Color::Cyan).underlined(),
+                ));
+                spans.push(Span::styled(
+                    "! ",
+                    Style::default().fg(Color::Yellow).bold(),
+                ));
             } else if session.has_new_output {
-                spans.push(Span::styled(label, Style::default().fg(Color::Cyan).underlined()));
+                spans.push(Span::styled(
+                    label,
+                    Style::default().fg(Color::Cyan).underlined(),
+                ));
             } else if matches!(session.state, SessionState::Suspended) {
                 spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
             } else {
@@ -50,10 +76,16 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, sessions: &[Session], active_in
         spans.push(Span::raw(" "));
     }
 
-    spans.push(Span::styled(format!("── {}", now), Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(
+        format!("── {}", now),
+        Style::default().fg(Color::DarkGray),
+    ));
 
-    let tab_bar = Paragraph::new(Line::from(spans))
-        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::DarkGray)));
+    let tab_bar = Paragraph::new(Line::from(spans)).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
     f.render_widget(tab_bar, area);
 }
 
@@ -79,10 +111,18 @@ pub fn render_terminal(f: &mut Frame, area: Rect, session: &Session) {
             }
             let mut style = Style::default();
             if let Some(fg) = cell.fg {
-                style = style.fg(if cell.inverse { cell.bg.unwrap_or(Color::Reset) } else { fg });
+                style = style.fg(if cell.inverse {
+                    cell.bg.unwrap_or(Color::Reset)
+                } else {
+                    fg
+                });
             }
             if let Some(bg) = cell.bg {
-                style = style.bg(if cell.inverse { cell.fg.unwrap_or(Color::Reset) } else { bg });
+                style = style.bg(if cell.inverse {
+                    cell.fg.unwrap_or(Color::Reset)
+                } else {
+                    bg
+                });
             } else if cell.inverse {
                 if let Some(fg) = cell.fg {
                     style = style.bg(fg);
@@ -99,7 +139,10 @@ pub fn render_terminal(f: &mut Frame, area: Rect, session: &Session) {
                 current_text.push_str(&cell.text);
             } else {
                 if !current_text.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut current_text), current_style));
+                    spans.push(Span::styled(
+                        std::mem::take(&mut current_text),
+                        current_style,
+                    ));
                 }
                 current_text = cell.text.clone();
                 current_style = style;
@@ -158,23 +201,26 @@ pub fn render_status_bar(
             Span::raw(widgets::format_duration_short(d.uptime_secs)),
         ]
     } else {
-        vec![
-            Span::styled(
-                match &session.state {
-                    SessionState::Connecting => "Connecting...".to_string(),
-                    SessionState::Disconnected { reason } => format!("Disconnected: {}", reason),
-                    SessionState::Reconnecting { attempt, max } => format!("Reconnecting ({}/{})", attempt, max),
-                    _ => {
-                        if let Some(ref jump) = session.jump_host {
-                            format!("{}@{}:{} via {}", session.username, session.hostname, session.port, jump)
-                        } else {
-                            format!("{}@{}:{}", session.username, session.hostname, session.port)
-                        }
+        vec![Span::styled(
+            match &session.state {
+                SessionState::Connecting => "Connecting...".to_string(),
+                SessionState::Disconnected { reason } => format!("Disconnected: {}", reason),
+                SessionState::Reconnecting { attempt, max } => {
+                    format!("Reconnecting ({}/{})", attempt, max)
+                }
+                _ => {
+                    if let Some(ref jump) = session.jump_host {
+                        format!(
+                            "{}@{}:{} via {}",
+                            session.username, session.hostname, session.port, jump
+                        )
+                    } else {
+                        format!("{}@{}:{}", session.username, session.hostname, session.port)
                     }
-                },
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]
+                }
+            },
+            Style::default().fg(Color::DarkGray),
+        )]
     };
 
     // Append port forward summary if any
@@ -187,8 +233,11 @@ pub fn render_status_bar(
         }
     }
 
-    let status = Paragraph::new(Line::from(spans))
-        .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)));
+    let status = Paragraph::new(Line::from(spans)).block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
     f.render_widget(status, area);
 }
 
@@ -210,6 +259,10 @@ pub fn render_footer(f: &mut Frame, area: Rect) {
         Span::styled("Alt+h", Style::default().fg(Color::Cyan)),
         Span::raw(":Help"),
     ]))
-    .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)));
+    .block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
     f.render_widget(footer, area);
 }

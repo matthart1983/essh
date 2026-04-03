@@ -25,32 +25,22 @@ pub enum ConfigError {
 // Enums
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TofuPolicy {
     Strict,
+    #[default]
     Prompt,
     Auto,
 }
 
-impl Default for TofuPolicy {
-    fn default() -> Self {
-        Self::Prompt
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticsDisplay {
+    #[default]
     StatusBar,
     Overlay,
     Hidden,
-}
-
-impl Default for DiagnosticsDisplay {
-    fn default() -> Self {
-        Self::StatusBar
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +257,7 @@ pub struct HostGroup {
 // AppConfig
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub general: GeneralConfig,
@@ -283,22 +273,6 @@ pub struct AppConfig {
     pub hosts: Vec<HostEntry>,
     #[serde(default)]
     pub host_groups: Vec<HostGroup>,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            diagnostics: DiagnosticsConfig::default(),
-            session: SessionConfig::default(),
-            security: SecurityConfig::default(),
-            audit: AuditConfig::default(),
-            host_monitor: HostMonitorConfig::default(),
-            fleet: FleetConfig::default(),
-            hosts: Vec::new(),
-            host_groups: Vec::new(),
-        }
-    }
 }
 
 impl AppConfig {
@@ -347,16 +321,16 @@ mod tests {
         assert_eq!(cfg.general.log_level, "info");
         assert_eq!(cfg.general.default_user, None);
         assert_eq!(cfg.general.default_key, None);
-        assert_eq!(cfg.diagnostics.enabled, true);
+        assert!(cfg.diagnostics.enabled);
         assert_eq!(cfg.diagnostics.display, DiagnosticsDisplay::StatusBar);
         assert_eq!(cfg.diagnostics.export_format, "jsonl");
         assert_eq!(cfg.diagnostics.keepalive_interval, 15);
-        assert_eq!(cfg.session.auto_reconnect, true);
+        assert!(cfg.session.auto_reconnect);
         assert_eq!(cfg.session.reconnect_max_retries, 5);
-        assert_eq!(cfg.session.multiplex, true);
-        assert_eq!(cfg.session.recording, false);
+        assert!(cfg.session.multiplex);
+        assert!(!cfg.session.recording);
         assert_eq!(cfg.security.min_key_bits, 3072);
-        assert_eq!(cfg.audit.enabled, true);
+        assert!(cfg.audit.enabled);
         assert_eq!(cfg.audit.syslog_target, None);
         assert!(cfg.hosts.is_empty());
         assert!(cfg.host_groups.is_empty());
@@ -391,7 +365,10 @@ mod tests {
         assert_eq!(cfg.general.cache_ttl, default_cfg.general.cache_ttl);
         assert_eq!(cfg.general.log_level, default_cfg.general.log_level);
         assert_eq!(cfg.diagnostics.enabled, default_cfg.diagnostics.enabled);
-        assert_eq!(cfg.session.auto_reconnect, default_cfg.session.auto_reconnect);
+        assert_eq!(
+            cfg.session.auto_reconnect,
+            default_cfg.session.auto_reconnect
+        );
         assert_eq!(cfg.security.min_key_bits, default_cfg.security.min_key_bits);
         assert_eq!(cfg.audit.enabled, default_cfg.audit.enabled);
         assert!(cfg.hosts.is_empty());
@@ -439,7 +416,10 @@ mod tests {
         assert_eq!(cfg.security.min_key_bits, 4096);
         assert_eq!(cfg.security.allowed_ciphers, vec!["aes256-gcm@openssh.com"]);
         assert_eq!(cfg.security.allowed_kex, vec!["curve25519-sha256"]);
-        assert_eq!(cfg.security.allowed_macs, vec!["hmac-sha2-512-etm@openssh.com"]);
+        assert_eq!(
+            cfg.security.allowed_macs,
+            vec!["hmac-sha2-512-etm@openssh.com"]
+        );
     }
 
     #[test]
@@ -539,16 +519,22 @@ mod tests {
             notification_patterns = ["ERROR", "build complete", "OOM"]
         "#;
         let cfg: AppConfig = toml::from_str(toml_str).expect("parse notification_patterns");
-        assert_eq!(cfg.session.notification_patterns, vec![
-            "ERROR".to_string(),
-            "build complete".to_string(),
-            "OOM".to_string(),
-        ]);
+        assert_eq!(
+            cfg.session.notification_patterns,
+            vec![
+                "ERROR".to_string(),
+                "build complete".to_string(),
+                "OOM".to_string(),
+            ]
+        );
 
         // Round-trip
         let serialized = toml::to_string_pretty(&cfg).expect("serialize");
         let cfg2: AppConfig = toml::from_str(&serialized).expect("deserialize");
-        assert_eq!(cfg2.session.notification_patterns, cfg.session.notification_patterns);
+        assert_eq!(
+            cfg2.session.notification_patterns,
+            cfg.session.notification_patterns
+        );
 
         // Default is empty
         let default_cfg = AppConfig::default();

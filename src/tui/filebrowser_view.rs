@@ -33,7 +33,11 @@ pub fn render(f: &mut Frame, area: Rect, browser: &FileBrowser) {
 
 fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
     let is_active = browser.focus == FilePaneFocus::Local;
-    let border_color = if is_active { Color::Yellow } else { Color::Cyan };
+    let border_color = if is_active {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
     let title = format!(" Local: {} ", browser.local_path.display());
 
     let block = Block::default()
@@ -80,12 +84,7 @@ fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
         };
 
         let name_width = inner.width as usize - size_str.len() - 4;
-        let padded = format!(
-            "  {:<width$}{}",
-            display_name,
-            size_str,
-            width = name_width
-        );
+        let padded = format!("  {:<width$}{}", display_name, size_str, width = name_width);
         lines.push(Line::from(Span::styled(padded, style)));
     }
 
@@ -95,7 +94,11 @@ fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
 
 fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
     let is_active = browser.focus == FilePaneFocus::Remote;
-    let border_color = if is_active { Color::Yellow } else { Color::Cyan };
+    let border_color = if is_active {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
     let title = format!(" Remote: {} ", browser.remote_path);
 
     let block = Block::default()
@@ -149,12 +152,7 @@ fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
         };
 
         let name_width = inner.width as usize - size_str.len() - 4;
-        let padded = format!(
-            "  {:<width$}{}",
-            display_name,
-            size_str,
-            width = name_width
-        );
+        let padded = format!("  {:<width$}{}", display_name, size_str, width = name_width);
         lines.push(Line::from(Span::styled(padded, style)));
     }
 
@@ -180,7 +178,10 @@ fn render_transfer_bar(f: &mut Frame, area: Rect, browser: &FileBrowser) {
             ),
             Span::styled(bar, Style::default().fg(Color::Green)),
             Span::styled(format!(" {:.0}%", pct), Style::default().fg(Color::Yellow)),
-            Span::styled(format!("  {}", size_str), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("  {}", size_str),
+                Style::default().fg(Color::DarkGray),
+            ),
         ])
     } else if let Some(ref msg) = browser.status_message {
         Line::from(Span::styled(
@@ -188,10 +189,7 @@ fn render_transfer_bar(f: &mut Frame, area: Rect, browser: &FileBrowser) {
             Style::default().fg(Color::Yellow),
         ))
     } else {
-        Line::from(Span::styled(
-            " Ready",
-            Style::default().fg(Color::DarkGray),
-        ))
+        Line::from(Span::styled(" Ready", Style::default().fg(Color::DarkGray)))
     };
 
     let paragraph = Paragraph::new(line).block(

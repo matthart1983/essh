@@ -95,7 +95,7 @@ impl client::Handler for ClientHandler {
         }
     }
 
-    fn server_channel_open_forwarded_tcpip(
+    async fn server_channel_open_forwarded_tcpip(
         &mut self,
         _channel: Channel<Msg>,
         _connected_address: &str,
@@ -103,8 +103,8 @@ impl client::Handler for ClientHandler {
         _originator_address: &str,
         _originator_port: u32,
         _session: &mut client::Session,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -131,12 +131,8 @@ impl SshClient {
             server_banner: server_banner.clone(),
         };
 
-        let mut handle = client::connect(
-            ssh_config,
-            (config.hostname.as_str(), config.port),
-            handler,
-        )
-        .await?;
+        let mut handle =
+            client::connect(ssh_config, (config.hostname.as_str(), config.port), handler).await?;
 
         let authenticated = match &config.auth {
             AuthMethod::Password(pw) => {
@@ -286,13 +282,11 @@ impl SshClient {
         let mut handle = client::connect_stream(ssh_config, stream, handler).await?;
 
         let authenticated = match &target_config.auth {
-            AuthMethod::Password(pw) => {
-                handle
-                    .authenticate_password(&target_config.username, pw)
-                    .await
-                    .map_err(SshError::Russh)?
-                    .success()
-            }
+            AuthMethod::Password(pw) => handle
+                .authenticate_password(&target_config.username, pw)
+                .await
+                .map_err(SshError::Russh)?
+                .success(),
             AuthMethod::KeyFile(path) => {
                 let key = russh::keys::load_secret_key(path, None)?;
                 let key = PrivateKeyWithHashAlg::new(Arc::new(key), None);
@@ -308,7 +302,9 @@ impl SshClient {
         };
 
         if !authenticated {
-            return Err(SshError::Auth("Authentication failed on target host".into()));
+            return Err(SshError::Auth(
+                "Authentication failed on target host".into(),
+            ));
         }
 
         let fingerprint = host_key_fingerprint
@@ -412,12 +408,9 @@ impl tokio::io::AsyncWrite for ChannelStream {
         match writer.try_send(data) {
             Ok(()) => std::task::Poll::Ready(Ok(len)),
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => std::task::Poll::Pending,
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                std::task::Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "channel closed",
-                )))
-            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => std::task::Poll::Ready(Err(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "channel closed"),
+            )),
         }
     }
 

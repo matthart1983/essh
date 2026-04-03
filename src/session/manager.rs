@@ -19,7 +19,10 @@ impl SessionManager {
 
     pub fn add_session(&mut self, session: Session) -> Result<usize, String> {
         if self.sessions.len() >= self.max_sessions {
-            return Err(format!("Maximum {} concurrent sessions reached", self.max_sessions));
+            return Err(format!(
+                "Maximum {} concurrent sessions reached",
+                self.max_sessions
+            ));
         }
         let idx = self.sessions.len();
         self.sessions.push(session);
@@ -82,7 +85,9 @@ impl SessionManager {
     }
 
     pub fn switch_next(&mut self) {
-        if self.sessions.is_empty() { return; }
+        if self.sessions.is_empty() {
+            return;
+        }
         let next = match self.active_index {
             Some(i) => (i + 1) % self.sessions.len(),
             None => 0,
@@ -91,7 +96,9 @@ impl SessionManager {
     }
 
     pub fn switch_prev(&mut self) {
-        if self.sessions.is_empty() { return; }
+        if self.sessions.is_empty() {
+            return;
+        }
         let prev = match self.active_index {
             Some(0) => self.sessions.len() - 1,
             Some(i) => i - 1,
@@ -117,7 +124,10 @@ impl SessionManager {
 
     #[allow(dead_code)]
     pub fn active_count(&self) -> usize {
-        self.sessions.iter().filter(|s| matches!(s.state, SessionState::Active | SessionState::Suspended)).count()
+        self.sessions
+            .iter()
+            .filter(|s| matches!(s.state, SessionState::Active | SessionState::Suspended))
+            .count()
     }
 }
 

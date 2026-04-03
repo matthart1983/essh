@@ -6,13 +6,7 @@ pub struct NotificationMatcher {
 
 impl NotificationMatcher {
     pub fn new(patterns: &[String]) -> Self {
-        let patterns = patterns
-            .iter()
-            .filter_map(|p| match Regex::new(p) {
-                Ok(re) => Some(re),
-                Err(_) => None,
-            })
-            .collect();
+        let patterns = patterns.iter().filter_map(|p| Regex::new(p).ok()).collect();
         Self { patterns }
     }
 
@@ -45,7 +39,10 @@ mod tests {
     fn test_single_pattern_matching() {
         let matcher = NotificationMatcher::new(&["ERROR".to_string()]);
         assert!(!matcher.is_empty());
-        assert_eq!(matcher.check("something ERROR happened"), Some("ERROR".to_string()));
+        assert_eq!(
+            matcher.check("something ERROR happened"),
+            Some("ERROR".to_string())
+        );
     }
 
     #[test]
@@ -55,7 +52,10 @@ mod tests {
             "OOM".to_string(),
             "build complete".to_string(),
         ]);
-        assert_eq!(matcher.check("build complete"), Some("build complete".to_string()));
+        assert_eq!(
+            matcher.check("build complete"),
+            Some("build complete".to_string())
+        );
         assert_eq!(matcher.check("OOM killed"), Some("OOM".to_string()));
         assert_eq!(matcher.check("fatal ERROR"), Some("ERROR".to_string()));
     }
@@ -77,10 +77,7 @@ mod tests {
 
     #[test]
     fn test_invalid_regex_patterns_skipped() {
-        let matcher = NotificationMatcher::new(&[
-            "[invalid".to_string(),
-            "ERROR".to_string(),
-        ]);
+        let matcher = NotificationMatcher::new(&["[invalid".to_string(), "ERROR".to_string()]);
         // Invalid pattern skipped, valid one works
         assert!(!matcher.is_empty());
         assert_eq!(matcher.check("ERROR"), Some("ERROR".to_string()));
@@ -88,10 +85,7 @@ mod tests {
 
     #[test]
     fn test_all_invalid_patterns() {
-        let matcher = NotificationMatcher::new(&[
-            "[invalid".to_string(),
-            "(unclosed".to_string(),
-        ]);
+        let matcher = NotificationMatcher::new(&["[invalid".to_string(), "(unclosed".to_string()]);
         assert!(matcher.is_empty());
         assert!(matcher.check("anything").is_none());
     }

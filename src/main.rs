@@ -31,9 +31,9 @@ use cli::{AuditAction, Cli, Commands, ConfigAction, HostsAction, KeysAction, Ses
 use config::{AppConfig, TofuPolicy};
 use diagnostics::DiagnosticsEngine;
 use event::{AppEvent, EventHandler};
+use notify::NotificationMatcher;
 use session::{Session, SessionState};
 use ssh::{AuthMethod, ConnectConfig, SshClient, SshSession};
-use notify::NotificationMatcher;
 use tui::{App, AppView, DashboardTab, HostDisplay, HostStatus, Notification};
 
 // ---------------------------------------------------------------------------
@@ -156,8 +156,8 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
                     println!("No cached hosts.");
                 } else {
                     println!(
-                        "{:<20} {:<30} {:<6} {:<16} {:<24} {}",
-                        "Fingerprint", "Hostname", "Port", "Key Type", "Last Seen", "Tags"
+                        "{:<20} {:<30} {:<6} {:<16} {:<24} Tags",
+                        "Fingerprint", "Hostname", "Port", "Key Type", "Last Seen"
                     );
                     println!("{}", "-".repeat(110));
                     for h in &hosts {
@@ -185,7 +185,10 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
                 let db = CacheDb::open_default()?;
                 let tags: std::collections::HashMap<String, String> = tag
                     .iter()
-                    .filter_map(|t| t.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+                    .filter_map(|t| {
+                        t.split_once('=')
+                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                    })
                     .collect();
                 db.trust_host(&hostname, None, port, "unknown", "unknown")?;
                 if !tags.is_empty() {
@@ -285,7 +288,7 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
                         }
                     }
                     Ok(recs) => {
-                        println!("{:<40} {}", "Session ID", "File");
+                        println!("{:<40} File", "Session ID");
                         println!("{}", "-".repeat(80));
                         for (name, path) in &recs {
                             println!("{:<40} {}", name, path.display());
@@ -431,7 +434,15 @@ async fn connect_and_shell(
     // TOFU host key check
     let db = CacheDb::open_default()?;
     let status = db.check_host_key(&connect_config.hostname, connect_config.port, &fingerprint)?;
-    handle_tofu(&db, &connect_config, &fingerprint, &status, app_config, audit, &session_id)?;
+    handle_tofu(
+        &db,
+        &connect_config,
+        &fingerprint,
+        &status,
+        app_config,
+        audit,
+        &session_id,
+    )?;
 
     db.update_last_seen(&connect_config.hostname, connect_config.port)?;
 
@@ -677,14 +688,19 @@ async fn tui_main_loop(
                                         && runtimes.get(i).and_then(|r| r.as_ref()).is_some();
                                     if should_reconnect {
                                         let max = config.session.reconnect_max_retries;
-                                        if let Some(session) = app.session_manager.sessions.get_mut(i) {
-                                            session.state = SessionState::Reconnecting { attempt: 1, max };
+                                        if let Some(session) =
+                                            app.session_manager.sessions.get_mut(i)
+                                        {
+                                            session.state =
+                                                SessionState::Reconnecting { attempt: 1, max };
                                         }
                                         while reconnect_trackers.len() <= i {
                                             reconnect_trackers.push(None);
                                         }
                                         reconnect_trackers[i] = Some(ReconnectTracker::new(max));
-                                    } else if let Some(session) = app.session_manager.sessions.get_mut(i) {
+                                    } else if let Some(session) =
+                                        app.session_manager.sessions.get_mut(i)
+                                    {
                                         session.state = SessionState::Disconnected {
                                             reason: "Connection lost".to_string(),
                                         };
@@ -723,7 +739,7 @@ async fn tui_main_loop(
                 tick_count += 1;
 
                 // Update diagnostics snapshots every 10 ticks (1s)
-                if tick_count % 10 == 0 {
+                if tick_count.is_multiple_of(10) {
                     for (i, rt_opt) in runtimes.iter().enumerate() {
                         if let Some(rt) = rt_opt {
                             let snap = rt.diagnostics.snapshot().await;
@@ -735,7 +751,7 @@ async fn tui_main_loop(
                 }
 
                 // Collect host metrics every 20 ticks (2s)
-                if tick_count % 20 == 0 {
+                if tick_count.is_multiple_of(20) {
                     for (i, rt_opt) in runtimes.iter().enumerate() {
                         if let Some(rt) = rt_opt {
                             if let Some(ref mon) = rt.monitor {
@@ -748,9 +764,7 @@ async fn tui_main_loop(
                                 let tx_h = mon.net_tx_history();
                                 // We do a quick clone of handle for the spawned task
                                 // Actually we can't easily clone Handle, so collect inline
-                                if let Err(_) = mon.collect(handle).await {
-                                    // Metric collection failed, skip
-                                }
+                                let _ = mon.collect(handle).await;
                                 // Update app state from collector
                                 if let Some(slot) = app.session_metrics.get_mut(i) {
                                     *slot = Some(metrics_arc.read().await.clone());
@@ -782,9 +796,7 @@ async fn tui_main_loop(
                         continue;
                     }
 
-                    let tracker = reconnect_trackers
-                        .get_mut(i)
-                        .and_then(|t| t.as_mut());
+                    let tracker = reconnect_trackers.get_mut(i).and_then(|t| t.as_mut());
                     let tracker = match tracker {
                         Some(t) => t,
                         None => continue,
@@ -856,9 +868,7 @@ async fn tui_main_loop(
                         fleet_prober.probe_all(&hosts).await;
                         // Update host displays with probe results
                         for host in app.hosts.iter_mut() {
-                            if let Some(state) =
-                                fleet_prober.get_state(&host.hostname, host.port)
-                            {
+                            if let Some(state) = fleet_prober.get_state(&host.hostname, host.port) {
                                 if state.result.online {
                                     host.status = HostStatus::Online;
                                     host.latency_ms = state.result.latency_ms;
@@ -874,13 +884,14 @@ async fn tui_main_loop(
             }
             AppEvent::Resize(w, h) => {
                 // Forward PTY resize to all active sessions
-                for rt_opt in runtimes.iter() {
-                    if let Some(rt) = rt_opt {
-                        rt.channel_tx.send(SessionInput::Resize {
+                for rt in runtimes.iter().flatten() {
+                    rt.channel_tx
+                        .send(SessionInput::Resize {
                             cols: w as u32,
                             rows: h as u32,
-                        }).await.ok();
-                    }
+                        })
+                        .await
+                        .ok();
                 }
             }
         }
@@ -1059,7 +1070,8 @@ async fn handle_key_event(
                         if let Some(idx) = app.session_manager.active_index {
                             if let Some(Some(rt)) = runtimes.get(idx) {
                                 let remote_path = "/home".to_string();
-                                match list_remote_files(&rt.ssh_session.handle, &remote_path).await {
+                                match list_remote_files(&rt.ssh_session.handle, &remote_path).await
+                                {
                                     Ok(files) => {
                                         if let Some(ref mut fb) = app.file_browser {
                                             fb.remote_files = files;
@@ -1067,7 +1079,8 @@ async fn handle_key_event(
                                     }
                                     Err(e) => {
                                         if let Some(ref mut fb) = app.file_browser {
-                                            fb.status_message = Some(format!("Remote listing failed: {}", e));
+                                            fb.status_message =
+                                                Some(format!("Remote listing failed: {}", e));
                                         }
                                     }
                                 }
@@ -1177,25 +1190,17 @@ async fn handle_key_event(
         AppView::Dashboard => {
             handle_dashboard_key(key, app, config, audit, runtimes, output_rxs).await
         }
-        AppView::Session => {
-            handle_session_key(key, app, runtimes).await
-        }
-        AppView::Monitor => {
-            handle_monitor_key(key, app)
-        }
-        AppView::PortForwarding => {
-            handle_portfwd_key(key, app)
-        }
-        AppView::FileBrowser => {
-            handle_filebrowser_key(key, app, runtimes).await
-        }
+        AppView::Session => handle_session_key(key, app, runtimes).await,
+        AppView::Monitor => handle_monitor_key(key, app),
+        AppView::PortForwarding => handle_portfwd_key(key, app),
+        AppView::FileBrowser => handle_filebrowser_key(key, app, runtimes).await,
     }
 }
 
 async fn handle_filebrowser_key(
     key: crossterm::event::KeyEvent,
     app: &mut App,
-    runtimes: &mut Vec<Option<SessionRuntime>>,
+    runtimes: &mut [Option<SessionRuntime>],
 ) -> anyhow::Result<KeyAction> {
     let browser = match app.file_browser.as_mut() {
         Some(b) => b,
@@ -1225,7 +1230,8 @@ async fn handle_filebrowser_key(
                         let remote_path = browser.remote_path.clone();
                         if let Some(idx) = app.session_manager.active_index {
                             if let Some(Some(rt)) = runtimes.get(idx) {
-                                match list_remote_files(&rt.ssh_session.handle, &remote_path).await {
+                                match list_remote_files(&rt.ssh_session.handle, &remote_path).await
+                                {
                                     Ok(files) => {
                                         if let Some(ref mut fb) = app.file_browser {
                                             fb.remote_files = files;
@@ -1243,33 +1249,31 @@ async fn handle_filebrowser_key(
                 }
             }
         }
-        KeyCode::Backspace => {
-            match browser.focus {
-                filetransfer::FilePaneFocus::Local => {
-                    browser.parent_local();
-                }
-                filetransfer::FilePaneFocus::Remote => {
-                    browser.parent_remote();
-                    let remote_path = browser.remote_path.clone();
-                    if let Some(idx) = app.session_manager.active_index {
-                        if let Some(Some(rt)) = runtimes.get(idx) {
-                            match list_remote_files(&rt.ssh_session.handle, &remote_path).await {
-                                Ok(files) => {
-                                    if let Some(ref mut fb) = app.file_browser {
-                                        fb.remote_files = files;
-                                    }
+        KeyCode::Backspace => match browser.focus {
+            filetransfer::FilePaneFocus::Local => {
+                browser.parent_local();
+            }
+            filetransfer::FilePaneFocus::Remote => {
+                browser.parent_remote();
+                let remote_path = browser.remote_path.clone();
+                if let Some(idx) = app.session_manager.active_index {
+                    if let Some(Some(rt)) = runtimes.get(idx) {
+                        match list_remote_files(&rt.ssh_session.handle, &remote_path).await {
+                            Ok(files) => {
+                                if let Some(ref mut fb) = app.file_browser {
+                                    fb.remote_files = files;
                                 }
-                                Err(e) => {
-                                    if let Some(ref mut fb) = app.file_browser {
-                                        fb.status_message = Some(format!("Error: {}", e));
-                                    }
+                            }
+                            Err(e) => {
+                                if let Some(ref mut fb) = app.file_browser {
+                                    fb.status_message = Some(format!("Error: {}", e));
                                 }
                             }
                         }
                     }
                 }
             }
-        }
+        },
         KeyCode::Char('u') => {
             // Upload: local pane focused, send selected local file to remote
             if browser.focus == filetransfer::FilePaneFocus::Local {
@@ -1291,19 +1295,27 @@ async fn handle_filebrowser_key(
                             complete: false,
                         });
                         if let Some(Some(rt)) = runtimes.get(idx) {
-                            match upload_file(&rt.ssh_session.handle, &local_entry.path, &remote_dest).await {
+                            match upload_file(
+                                &rt.ssh_session.handle,
+                                &local_entry.path,
+                                &remote_dest,
+                            )
+                            .await
+                            {
                                 Ok(_) => {
                                     if let Some(ref mut fb) = app.file_browser {
                                         if let Some(ref mut t) = fb.transfer {
                                             t.bytes_transferred = t.total_bytes;
                                             t.complete = true;
                                         }
-                                        fb.status_message = Some(format!("Uploaded {}", local_entry.name));
+                                        fb.status_message =
+                                            Some(format!("Uploaded {}", local_entry.name));
                                         // Refresh remote
                                         let rp = fb.remote_path.clone();
-                                        match list_remote_files(&rt.ssh_session.handle, &rp).await {
-                                            Ok(files) => fb.remote_files = files,
-                                            Err(_) => {}
+                                        if let Ok(files) =
+                                            list_remote_files(&rt.ssh_session.handle, &rp).await
+                                        {
+                                            fb.remote_files = files;
                                         }
                                     }
                                 }
@@ -1341,14 +1353,17 @@ async fn handle_filebrowser_key(
                             complete: false,
                         });
                         if let Some(Some(rt)) = runtimes.get(idx) {
-                            match download_file(&rt.ssh_session.handle, &remote_src, &local_dest).await {
+                            match download_file(&rt.ssh_session.handle, &remote_src, &local_dest)
+                                .await
+                            {
                                 Ok(_) => {
                                     if let Some(ref mut fb) = app.file_browser {
                                         if let Some(ref mut t) = fb.transfer {
                                             t.bytes_transferred = t.total_bytes;
                                             t.complete = true;
                                         }
-                                        fb.status_message = Some(format!("Downloaded {}", remote_entry.name));
+                                        fb.status_message =
+                                            Some(format!("Downloaded {}", remote_entry.name));
                                         fb.list_local_files();
                                     }
                                 }
@@ -1387,14 +1402,20 @@ async fn handle_filebrowser_key(
                     };
                     if let Some(idx) = app.session_manager.active_index {
                         if let Some(Some(rt)) = runtimes.get(idx) {
-                            match exec_remote_command(&rt.ssh_session.handle, &format!("mkdir -p '{}'", new_dir)).await {
+                            match exec_remote_command(
+                                &rt.ssh_session.handle,
+                                &format!("mkdir -p '{}'", new_dir),
+                            )
+                            .await
+                            {
                                 Ok(_) => {
                                     if let Some(ref mut fb) = app.file_browser {
                                         fb.status_message = Some("Created new_folder".into());
                                         let rp = fb.remote_path.clone();
-                                        match list_remote_files(&rt.ssh_session.handle, &rp).await {
-                                            Ok(files) => fb.remote_files = files,
-                                            Err(_) => {}
+                                        if let Ok(files) =
+                                            list_remote_files(&rt.ssh_session.handle, &rp).await
+                                        {
+                                            fb.remote_files = files;
                                         }
                                     }
                                 }
@@ -1409,55 +1430,54 @@ async fn handle_filebrowser_key(
                 }
             }
         }
-        KeyCode::Delete => {
-            match browser.focus {
-                filetransfer::FilePaneFocus::Local => {
-                    if let Some(entry) = browser.selected_local().cloned() {
-                        let result = if entry.is_dir {
-                            std::fs::remove_dir_all(&entry.path)
-                        } else {
-                            std::fs::remove_file(&entry.path)
-                        };
-                        match result {
-                            Ok(_) => {
-                                browser.status_message = Some(format!("Deleted {}", entry.name));
-                                browser.list_local_files();
-                            }
-                            Err(e) => {
-                                browser.status_message = Some(format!("Delete failed: {}", e));
-                            }
+        KeyCode::Delete => match browser.focus {
+            filetransfer::FilePaneFocus::Local => {
+                if let Some(entry) = browser.selected_local().cloned() {
+                    let result = if entry.is_dir {
+                        std::fs::remove_dir_all(&entry.path)
+                    } else {
+                        std::fs::remove_file(&entry.path)
+                    };
+                    match result {
+                        Ok(_) => {
+                            browser.status_message = Some(format!("Deleted {}", entry.name));
+                            browser.list_local_files();
+                        }
+                        Err(e) => {
+                            browser.status_message = Some(format!("Delete failed: {}", e));
                         }
                     }
                 }
-                filetransfer::FilePaneFocus::Remote => {
-                    if let Some(entry) = browser.selected_remote().cloned() {
-                        let full_path = if browser.remote_path.ends_with('/') {
-                            format!("{}{}", browser.remote_path, entry.name)
-                        } else {
-                            format!("{}/{}", browser.remote_path, entry.name)
-                        };
-                        let cmd = if entry.is_dir {
-                            format!("rm -rf '{}'", full_path)
-                        } else {
-                            format!("rm -f '{}'", full_path)
-                        };
-                        if let Some(idx) = app.session_manager.active_index {
-                            if let Some(Some(rt)) = runtimes.get(idx) {
-                                match exec_remote_command(&rt.ssh_session.handle, &cmd).await {
-                                    Ok(_) => {
-                                        if let Some(ref mut fb) = app.file_browser {
-                                            fb.status_message = Some(format!("Deleted {}", entry.name));
-                                            let rp = fb.remote_path.clone();
-                                            match list_remote_files(&rt.ssh_session.handle, &rp).await {
-                                                Ok(files) => fb.remote_files = files,
-                                                Err(_) => {}
-                                            }
+            }
+            filetransfer::FilePaneFocus::Remote => {
+                if let Some(entry) = browser.selected_remote().cloned() {
+                    let full_path = if browser.remote_path.ends_with('/') {
+                        format!("{}{}", browser.remote_path, entry.name)
+                    } else {
+                        format!("{}/{}", browser.remote_path, entry.name)
+                    };
+                    let cmd = if entry.is_dir {
+                        format!("rm -rf '{}'", full_path)
+                    } else {
+                        format!("rm -f '{}'", full_path)
+                    };
+                    if let Some(idx) = app.session_manager.active_index {
+                        if let Some(Some(rt)) = runtimes.get(idx) {
+                            match exec_remote_command(&rt.ssh_session.handle, &cmd).await {
+                                Ok(_) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.status_message = Some(format!("Deleted {}", entry.name));
+                                        let rp = fb.remote_path.clone();
+                                        if let Ok(files) =
+                                            list_remote_files(&rt.ssh_session.handle, &rp).await
+                                        {
+                                            fb.remote_files = files;
                                         }
                                     }
-                                    Err(e) => {
-                                        if let Some(ref mut fb) = app.file_browser {
-                                            fb.status_message = Some(format!("Delete failed: {}", e));
-                                        }
+                                }
+                                Err(e) => {
+                                    if let Some(ref mut fb) = app.file_browser {
+                                        fb.status_message = Some(format!("Delete failed: {}", e));
                                     }
                                 }
                             }
@@ -1465,7 +1485,7 @@ async fn handle_filebrowser_key(
                     }
                 }
             }
-        }
+        },
         KeyCode::Esc => {
             app.view = AppView::Session;
             app.file_browser = None;
@@ -1475,10 +1495,7 @@ async fn handle_filebrowser_key(
     Ok(KeyAction::Handled)
 }
 
-fn handle_portfwd_key(
-    key: crossterm::event::KeyEvent,
-    app: &mut App,
-) -> anyhow::Result<KeyAction> {
+fn handle_portfwd_key(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<KeyAction> {
     if app.port_forward_adding {
         match key.code {
             KeyCode::Esc => {
@@ -1493,7 +1510,12 @@ fn handle_portfwd_key(
                         if let Some(mgr) = app.port_forward_managers.get_mut(active_idx) {
                             match dir {
                                 portfwd::ForwardDirection::Local => {
-                                    mgr.add_local("127.0.0.1", bind_port, &target_host, target_port);
+                                    mgr.add_local(
+                                        "127.0.0.1",
+                                        bind_port,
+                                        &target_host,
+                                        target_port,
+                                    );
                                 }
                                 portfwd::ForwardDirection::Remote => {
                                     mgr.add_remote("0.0.0.0", bind_port, &target_host, target_port);
@@ -1719,7 +1741,7 @@ async fn handle_dashboard_key(
 async fn handle_session_key(
     key: crossterm::event::KeyEvent,
     app: &mut App,
-    runtimes: &mut Vec<Option<SessionRuntime>>,
+    runtimes: &mut [Option<SessionRuntime>],
 ) -> anyhow::Result<KeyAction> {
     // In session view, forward all non-Alt keys to the remote shell
     if key.modifiers.contains(KeyModifiers::ALT) {
@@ -1739,10 +1761,7 @@ async fn handle_session_key(
     Ok(KeyAction::Handled)
 }
 
-fn handle_monitor_key(
-    key: crossterm::event::KeyEvent,
-    app: &mut App,
-) -> anyhow::Result<KeyAction> {
+fn handle_monitor_key(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<KeyAction> {
     match key.code {
         KeyCode::Esc => {
             app.view = AppView::Session;
@@ -1776,14 +1795,18 @@ async fn open_session(
     let session_id = uuid::Uuid::new_v4().to_string();
 
     // Look up per-host config entry for user/key overrides
-    let host_entry = config.hosts.iter().find(|e| e.hostname == host.hostname && e.port == host.port);
+    let host_entry = config
+        .hosts
+        .iter()
+        .find(|e| e.hostname == host.hostname && e.port == host.port);
 
     let user = if !host.user.is_empty() {
         host.user.clone()
     } else if let Some(entry) = host_entry {
-        entry.user.clone().unwrap_or_else(|| {
-            config.general.default_user.clone().unwrap_or_else(whoami)
-        })
+        entry
+            .user
+            .clone()
+            .unwrap_or_else(|| config.general.default_user.clone().unwrap_or_else(whoami))
     } else {
         config.general.default_user.clone().unwrap_or_else(whoami)
     };
@@ -1797,7 +1820,9 @@ async fn open_session(
     } else if std::env::var("SSH_AUTH_SOCK").is_ok() {
         AuthMethod::Agent
     } else {
-        app.set_status("No key or ssh-agent available. Set general.default_key in config.".to_string());
+        app.set_status(
+            "No key or ssh-agent available. Set general.default_key in config.".to_string(),
+        );
         return Ok(());
     };
 
@@ -1853,8 +1878,13 @@ async fn open_session(
 
     let connect_result = if let Some(ref jump_name) = jump_host_name {
         // Resolve jump host config
-        let jump_entry = config.hosts.iter().find(|h| h.name == *jump_name || h.hostname == *jump_name);
-        let jump_hostname = jump_entry.map(|e| e.hostname.clone()).unwrap_or_else(|| jump_name.clone());
+        let jump_entry = config
+            .hosts
+            .iter()
+            .find(|h| h.name == *jump_name || h.hostname == *jump_name);
+        let jump_hostname = jump_entry
+            .map(|e| e.hostname.clone())
+            .unwrap_or_else(|| jump_name.clone());
         let jump_port = jump_entry.map(|e| e.port).unwrap_or(22);
         let jump_user = jump_entry
             .and_then(|e| e.user.clone())
@@ -1883,7 +1913,8 @@ async fn open_session(
         Ok((mut ssh_session, fingerprint, banner)) => {
             // TOFU check
             let db = CacheDb::open_default()?;
-            let status = db.check_host_key(&connect_config.hostname, connect_config.port, &fingerprint)?;
+            let status =
+                db.check_host_key(&connect_config.hostname, connect_config.port, &fingerprint)?;
             match status {
                 HostKeyStatus::Trusted | HostKeyStatus::Unknown => {
                     if matches!(status, HostKeyStatus::Unknown) {
@@ -1941,7 +1972,12 @@ async fn open_session(
             let recorder: Option<std::sync::Arc<recording::SessionRecorder>> =
                 if config.session.recording {
                     let cast_path = recording::recording_path(&session_id);
-                    match recording::SessionRecorder::new(&cast_path, cols as u32, rows as u32, Some(label.clone())) {
+                    match recording::SessionRecorder::new(
+                        &cast_path,
+                        cols as u32,
+                        rows as u32,
+                        Some(label.clone()),
+                    ) {
                         Ok(r) => Some(std::sync::Arc::new(r)),
                         Err(_) => None,
                     }
@@ -2204,10 +2240,8 @@ async fn replay_recording(path: &std::path::Path) -> anyhow::Result<()> {
     }
 
     // Only replay output events
-    let output_events: Vec<&recording::CastEvent> = events
-        .iter()
-        .filter(|e| e.event_type == "o")
-        .collect();
+    let output_events: Vec<&recording::CastEvent> =
+        events.iter().filter(|e| e.event_type == "o").collect();
 
     if output_events.is_empty() {
         println!("No output events in recording.");
@@ -2487,11 +2521,7 @@ fn parse_target(target: &str, config: &AppConfig) -> (String, String) {
                 .unwrap_or_else(whoami);
             return (user, entry.hostname.clone());
         }
-        let user = config
-            .general
-            .default_user
-            .clone()
-            .unwrap_or_else(whoami);
+        let user = config.general.default_user.clone().unwrap_or_else(whoami);
         (user, target.to_string())
     }
 }
@@ -2534,7 +2564,9 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                 let tags: Vec<String> =
                     h.tags.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
                 // Merge config entry data (name, user, jump_host) for this cached host
-                let config_entry = config.hosts.iter()
+                let config_entry = config
+                    .hosts
+                    .iter()
                     .find(|e| e.hostname == h.hostname && e.port == h.port);
                 let name = config_entry
                     .map(|e| e.name.clone())
@@ -2549,7 +2581,12 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                 // Merge tags from config if cache tags are empty
                 let display_tags = if tags.is_empty() {
                     if let Some(entry) = config_entry {
-                        entry.tags.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(", ")
+                        entry
+                            .tags
+                            .iter()
+                            .map(|(k, v)| format!("{}={}", k, v))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     } else {
                         String::new()
                     }
@@ -2844,7 +2881,9 @@ async fn exec_remote_command(
             russh::ChannelMsg::Data { data } => {
                 output.extend_from_slice(&data);
             }
-            russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => {
+            russh::ChannelMsg::Eof
+            | russh::ChannelMsg::Close
+            | russh::ChannelMsg::ExitStatus { .. } => {
                 break;
             }
             _ => {}
@@ -2887,13 +2926,18 @@ async fn upload_file(
             .map_err(|e| anyhow::anyhow!("Failed to send data: {}", e))?;
     }
 
-    channel.eof().await.map_err(|e| anyhow::anyhow!("Failed to send EOF: {}", e))?;
+    channel
+        .eof()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to send EOF: {}", e))?;
 
     // Wait for close
     let mut channel = channel;
     while let Some(msg) = channel.wait().await {
         match msg {
-            russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => break,
+            russh::ChannelMsg::Eof
+            | russh::ChannelMsg::Close
+            | russh::ChannelMsg::ExitStatus { .. } => break,
             _ => {}
         }
     }
@@ -2923,7 +2967,9 @@ async fn download_file(
             russh::ChannelMsg::Data { data } => {
                 file_data.extend_from_slice(&data);
             }
-            russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => break,
+            russh::ChannelMsg::Eof
+            | russh::ChannelMsg::Close
+            | russh::ChannelMsg::ExitStatus { .. } => break,
             _ => {}
         }
     }
@@ -2977,7 +3023,7 @@ mod tests {
     fn test_reconnect_tracker_should_retry_respects_backoff() {
         let mut tracker = ReconnectTracker::new(5);
         tracker.record_attempt(); // sets backoff_secs > 0
-        // Immediately after attempt, should NOT be ready (backoff not elapsed)
+                                  // Immediately after attempt, should NOT be ready (backoff not elapsed)
         assert!(!tracker.should_retry());
     }
 
@@ -3040,7 +3086,11 @@ mod tests {
         });
 
         // Find jump host for db-primary
-        let target = config.hosts.iter().find(|h| h.name == "db-primary").unwrap();
+        let target = config
+            .hosts
+            .iter()
+            .find(|h| h.name == "db-primary")
+            .unwrap();
         let jump_name = target.jump_host.as_deref().filter(|j| !j.is_empty());
         assert_eq!(jump_name, Some("bastion"));
 
