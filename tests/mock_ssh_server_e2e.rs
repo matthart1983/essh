@@ -1,7 +1,9 @@
 #![cfg(unix)]
 
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::fs;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -15,6 +17,9 @@ use ssh_key::{LineEnding, PrivateKey};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 
+const PTY_CONNECT_TIMEOUT_SECS: u64 = 15;
+const SNAPSHOT_PREVIEW_LIMIT: usize = 8 * 1024;
+
 struct Harness {
     _temp: TempDir,
     home: PathBuf,
@@ -24,6 +29,7 @@ struct Harness {
 struct CommandResult {
     stdout: String,
     stderr: String,
+    diagnostics: String,
 }
 
 struct MockServerRuntime {
@@ -76,15 +82,22 @@ impl Harness {
 
         let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
         let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+        let diagnostics = self.diagnostics_snapshot();
 
         assert!(
             output.status.success(),
-            "command failed\nstdout:\n{}\nstderr:\n{}",
+            "command failed\nstatus: {}\nstdout:\n{}\nstderr:\n{}\ndiagnostics:\n{}",
+            format_exit_status(&output.status),
             stdout,
-            stderr
+            stderr,
+            diagnostics
         );
 
-        CommandResult { stdout, stderr }
+        CommandResult {
+            stdout,
+            stderr,
+            diagnostics,
+        }
     }
 
     fn run_connect_under_pty(&self, script_body: &str) -> CommandResult {
@@ -95,8 +108,11 @@ import pty
 import select
 import subprocess
 import sys
+import time
 
 script_path = sys.argv[1]
+timeout_secs = float(sys.argv[2])
+deadline = time.monotonic() + timeout_secs
 master, slave = pty.openpty()
 proc = subprocess.Popen(
     ["sh", script_path],
@@ -108,6 +124,18 @@ proc = subprocess.Popen(
 os.close(slave)
 
 chunks = []
+timed_out = False
+
+def drain_master():
+    while True:
+        try:
+            data = os.read(master, 4096)
+        except OSError:
+            data = b""
+        if not data:
+            break
+        chunks.append(data)
+
 while True:
     ready, _, _ = select.select([master], [], [], 0.1)
     if master in ready:
@@ -120,41 +148,104 @@ while True:
         chunks.append(data)
         continue
 
-    if proc.poll() is not None:
-        while True:
-            try:
-                data = os.read(master, 4096)
-            except OSError:
-                data = b""
-            if not data:
-                break
-            chunks.append(data)
+    if time.monotonic() >= deadline:
+        timed_out = True
+        proc.kill()
         break
 
+    if proc.poll() is not None:
+        drain_master()
+        break
+
+drain_master()
 os.close(master)
 sys.stdout.buffer.write(b"".join(chunks))
 sys.stdout.flush()
-sys.exit(proc.wait())
+status = proc.wait()
+
+if timed_out:
+    sys.stderr.write(
+        f"pty wrapper timed out after {timeout_secs:.1f}s while running {script_path}\n"
+    )
+    if status == 0:
+        status = 124
+
+if status != 0:
+    sys.stderr.write(f"pty wrapper child exit status: {status}\n")
+
+sys.exit(status)
 "#;
 
         let output = Command::new("python3")
             .arg("-c")
             .arg(pty_runner)
             .arg(&script_path)
+            .arg(PTY_CONNECT_TIMEOUT_SECS.to_string())
             .output()
             .expect("run python pty wrapper");
 
         let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
         let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+        let diagnostics = self.diagnostics_snapshot();
 
         assert!(
             output.status.success(),
-            "pty command failed\nstdout:\n{}\nstderr:\n{}",
+            "pty command failed\nstatus: {}\nstdout:\n{}\nstderr:\n{}\ndiagnostics:\n{}",
+            format_exit_status(&output.status),
             stdout,
-            stderr
+            stderr,
+            diagnostics
         );
 
-        CommandResult { stdout, stderr }
+        CommandResult {
+            stdout,
+            stderr,
+            diagnostics,
+        }
+    }
+
+    fn diagnostics_snapshot(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(out, "home: {}", self.home.display());
+        let _ = writeln!(out, "bin: {}", self.bin.display());
+        self.append_tree_snapshot(&mut out, &self.home, &self.home);
+        out
+    }
+
+    fn append_tree_snapshot(&self, out: &mut String, root: &Path, dir: &Path) {
+        let mut entries = match fs::read_dir(dir) {
+            Ok(entries) => entries.filter_map(Result::ok).collect::<Vec<_>>(),
+            Err(err) => {
+                let rel = dir.strip_prefix(root).unwrap_or(dir);
+                let label = if rel.as_os_str().is_empty() {
+                    ".".to_owned()
+                } else {
+                    rel.display().to_string()
+                };
+                let _ = writeln!(out, "[error] {}: {}", label, err);
+                return;
+            }
+        };
+
+        entries.sort_by_key(|entry| entry.path());
+
+        for entry in entries {
+            let path = entry.path();
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+
+            if path.is_dir() {
+                let _ = writeln!(out, "[dir] {}", rel.display());
+                self.append_tree_snapshot(out, root, &path);
+                continue;
+            }
+
+            let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+            let _ = writeln!(out, "[file] {} ({} bytes)", rel.display(), size);
+
+            if should_preview_file(&path) {
+                append_file_preview(out, rel, &path);
+            }
+        }
     }
 }
 
@@ -162,11 +253,58 @@ impl CommandResult {
     fn stdout_contains(&self, needle: &str) {
         assert!(
             self.stdout.contains(needle),
-            "expected stdout to contain {:?}\nstdout:\n{}\nstderr:\n{}",
+            "expected stdout to contain {:?}\nstdout:\n{}\nstderr:\n{}\ndiagnostics:\n{}",
             needle,
             self.stdout,
-            self.stderr
+            self.stderr,
+            self.diagnostics
         );
+    }
+}
+
+fn format_exit_status(status: &std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return code.to_string();
+    }
+
+    match status.signal() {
+        Some(signal) => format!("signal {}", signal),
+        None => "unknown".to_owned(),
+    }
+}
+
+fn should_preview_file(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("config.toml") | Some("audit.log") | Some("run-connect.sh")
+    ) || matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("jsonl") | Some("cast")
+    )
+}
+
+fn append_file_preview(out: &mut String, display_path: &Path, path: &Path) {
+    match fs::read(path) {
+        Ok(contents) => {
+            let preview_len = contents.len().min(SNAPSHOT_PREVIEW_LIMIT);
+            let preview = String::from_utf8_lossy(&contents[..preview_len]);
+            let _ = writeln!(out, "----- {} -----", display_path.display());
+            out.push_str(&preview);
+            if !preview.ends_with('\n') {
+                out.push('\n');
+            }
+            if contents.len() > preview_len {
+                let _ = writeln!(
+                    out,
+                    "[truncated] showed {} of {} bytes",
+                    preview_len,
+                    contents.len()
+                );
+            }
+        }
+        Err(err) => {
+            let _ = writeln!(out, "[error reading {}] {}", display_path.display(), err);
+        }
     }
 }
 
