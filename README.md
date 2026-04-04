@@ -95,6 +95,9 @@ essh connect user@host
 # Use a specific key
 essh connect user@host -i ~/.ssh/id_ed25519
 
+# Use an encrypted key (ESSH will prompt for the passphrase)
+essh connect user@host -i ~/.ssh/id_ed25519_encrypted
+
 # Pull hosts from your existing SSH config
 essh hosts import
 
@@ -152,6 +155,7 @@ The idea is simple: terminal fidelity when you need a shell, operational signal 
 ### Built For Real SSH Work
 
 - Public key, password, and SSH agent auth.
+- Encrypted OpenSSH private keys with interactive passphrase prompts.
 - TOFU host key verification with `strict`, `prompt`, and `auto` modes.
 - Jump host / ProxyJump support.
 - Local port forwards, live add and remove.
@@ -174,6 +178,25 @@ The idea is simple: terminal fidelity when you need a shell, operational signal 
 ```bash
 essh hosts import
 ```
+
+### Use encrypted private keys
+
+ESSH supports passphrase-protected private keys for both direct CLI connections and the TUI.
+
+```bash
+# One-off CLI connection with an encrypted key
+essh connect user@host -i ~/.ssh/id_ed25519_encrypted
+
+# Add an encrypted key to the local key cache
+essh keys add ~/.ssh/id_ed25519_encrypted --name laptop-key
+```
+
+What to expect:
+
+- If the key is encrypted, ESSH prompts for the key passphrase and then continues the connection.
+- Saved hosts in the TUI behave the same way: selecting a host that uses an encrypted key will prompt for the passphrase when needed.
+- Jump-host connections and group runs also honor encrypted keys.
+- If you prefer to avoid repeated prompts, loading the key into `ssh-agent` still works.
 
 ### Bring structure to a messy fleet
 
