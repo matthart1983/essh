@@ -257,9 +257,15 @@ pub struct HostGroup {
 // AppConfig
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+fn default_theme() -> String {
+    "dark".to_string()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
+    #[serde(default = "default_theme")]
+    pub theme: String,
     pub general: GeneralConfig,
     pub diagnostics: DiagnosticsConfig,
     pub session: SessionConfig,
@@ -273,6 +279,23 @@ pub struct AppConfig {
     pub hosts: Vec<HostEntry>,
     #[serde(default)]
     pub host_groups: Vec<HostGroup>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+            general: GeneralConfig::default(),
+            diagnostics: DiagnosticsConfig::default(),
+            session: SessionConfig::default(),
+            security: SecurityConfig::default(),
+            audit: AuditConfig::default(),
+            host_monitor: HostMonitorConfig::default(),
+            fleet: FleetConfig::default(),
+            hosts: Vec::new(),
+            host_groups: Vec::new(),
+        }
+    }
 }
 
 impl AppConfig {
@@ -316,6 +339,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let cfg = AppConfig::default();
+        assert_eq!(cfg.theme, "dark");
         assert_eq!(cfg.general.tofu_policy, TofuPolicy::Prompt);
         assert_eq!(cfg.general.cache_ttl, "30d");
         assert_eq!(cfg.general.log_level, "info");
@@ -342,6 +366,7 @@ mod tests {
         let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
         let cfg2: AppConfig = toml::from_str(&toml_str).expect("deserialize");
 
+        assert_eq!(cfg2.theme, cfg.theme);
         assert_eq!(cfg2.general.tofu_policy, cfg.general.tofu_policy);
         assert_eq!(cfg2.general.cache_ttl, cfg.general.cache_ttl);
         assert_eq!(cfg2.general.log_level, cfg.general.log_level);

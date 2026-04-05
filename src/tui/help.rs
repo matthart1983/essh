@@ -3,7 +3,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-pub fn render(f: &mut Frame) {
+use crate::theme::Theme;
+
+pub fn render(f: &mut Frame, theme: &Theme) {
     let area = f.area();
 
     // Center a popup ~60 cols wide, ~28 rows tall
@@ -16,10 +18,10 @@ pub fn render(f: &mut Frame) {
     // Clear the area behind the popup
     f.render_widget(Clear, popup);
 
-    let key_style = Style::default().fg(Color::Cyan).bold();
-    let heading_style = Style::default().fg(Color::Yellow).bold();
-    let desc_style = Style::default().fg(Color::White);
-    let dim = Style::default().fg(Color::DarkGray);
+    let key_style = Style::default().fg(theme.key_hint).bold();
+    let heading_style = Style::default().fg(theme.active_tab).bold();
+    let desc_style = Style::default().fg(theme.text_primary);
+    let dim = Style::default().fg(theme.text_muted);
 
     let lines = vec![
         Line::raw(""),
@@ -72,6 +74,10 @@ pub fn render(f: &mut Frame) {
             Span::styled("    Alt+w       ", key_style),
             Span::styled("Close active session", desc_style),
         ]),
+        Line::from(vec![
+            Span::styled("    Alt+t       ", key_style),
+            Span::styled("Cycle theme", desc_style),
+        ]),
         Line::raw(""),
         Line::styled("  Dashboard", heading_style),
         Line::from(vec![
@@ -89,6 +95,10 @@ pub fn render(f: &mut Frame) {
         Line::from(vec![
             Span::styled("    r           ", key_style),
             Span::styled("Refresh hosts", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("    t           ", key_style),
+            Span::styled("Cycle theme", desc_style),
         ]),
         Line::from(vec![
             Span::styled("    d           ", key_style),
@@ -118,6 +128,10 @@ pub fn render(f: &mut Frame) {
             Span::styled("    Esc         ", key_style),
             Span::styled("Return to terminal", desc_style),
         ]),
+        Line::from(vec![
+            Span::styled("    t           ", key_style),
+            Span::styled("Cycle theme", desc_style),
+        ]),
         Line::raw(""),
         Line::styled("  Config", heading_style),
         Line::from(vec![
@@ -130,9 +144,9 @@ pub fn render(f: &mut Frame) {
 
     let block = Block::default()
         .title(" Help ")
-        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_style(Style::default().fg(theme.brand).bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.brand));
 
     let paragraph = Paragraph::new(lines)
         .block(block)

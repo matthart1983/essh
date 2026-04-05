@@ -18,6 +18,7 @@ use crate::filetransfer::FileBrowser;
 use crate::monitor::{history::MetricHistory, HostMetrics};
 use crate::portfwd::PortForwardManager;
 use crate::session::manager::SessionManager;
+use crate::theme::Theme;
 
 pub struct Notification {
     pub session_label: String,
@@ -101,6 +102,7 @@ pub struct App {
     pub file_browser: Option<FileBrowser>,
     // Command palette
     pub command_palette: Option<command_palette::CommandPalette>,
+    pub theme: Theme,
 }
 
 impl App {
@@ -132,6 +134,7 @@ impl App {
             port_forward_adding: false,
             file_browser: None,
             command_palette: None,
+            theme: crate::theme::dark(),
         }
     }
 
@@ -258,6 +261,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 app.status_message.as_deref(),
                 app.search_active,
                 &app.search_query,
+                &app.theme,
             );
         }
         AppView::Session => {
@@ -279,6 +283,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     &app.session_manager.sessions,
                     active_idx,
                     &app.notifications,
+                    &app.theme,
                 );
 
                 if app.split_pane {
@@ -338,6 +343,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                         &tx_hist,
                         &app.monitor_sort,
                         app.monitor_process_scroll,
+                        &app.theme,
                     );
                 } else {
                     // Full-width terminal
@@ -362,10 +368,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                         session,
                         diag,
                         app.port_forward_managers.get(active_idx),
+                        &app.theme,
                     );
                 }
 
-                session_view::render_footer(frame, chunks[3]);
+                session_view::render_footer(frame, chunks[3], &app.theme);
             }
         }
         AppView::Monitor => {
@@ -385,6 +392,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     &app.session_manager.sessions,
                     active_idx,
                     &app.notifications,
+                    &app.theme,
                 );
 
                 let metrics = app
@@ -425,6 +433,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     &tx_hist,
                     &app.monitor_sort,
                     app.monitor_process_scroll,
+                    &app.theme,
                 );
             }
         }
@@ -448,6 +457,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     &app.session_manager.sessions,
                     active_idx,
                     &app.notifications,
+                    &app.theme,
                 );
 
                 if let Some(session) = app.session_manager.sessions.get(active_idx) {
@@ -462,9 +472,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                         session,
                         diag,
                         app.port_forward_managers.get(active_idx),
+                        &app.theme,
                     );
                 }
-                session_view::render_footer(frame, chunks[3]);
+                session_view::render_footer(frame, chunks[3], &app.theme);
 
                 // Port forward overlay
                 if let Some(mgr) = app.port_forward_managers.get(active_idx) {
@@ -473,6 +484,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                         mgr,
                         &app.port_forward_input,
                         app.port_forward_adding,
+                        &app.theme,
                     );
                 }
             }
@@ -491,10 +503,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     &app.session_manager.sessions,
                     active_idx,
                     &app.notifications,
+                    &app.theme,
                 );
 
                 if let Some(ref browser) = app.file_browser {
-                    filebrowser_view::render(frame, chunks[1], browser);
+                    filebrowser_view::render(frame, chunks[1], browser, &app.theme);
                 }
             }
         }
@@ -502,12 +515,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Help overlay (rendered on top of any view)
     if app.show_help {
-        help::render(frame);
+        help::render(frame, &app.theme);
     }
 
     // Command palette overlay (rendered on top of everything)
     if let Some(ref palette) = app.command_palette {
-        command_palette::render(frame, palette);
+        command_palette::render(frame, palette, &app.theme);
     }
 }
 

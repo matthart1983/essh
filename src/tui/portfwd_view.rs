@@ -4,8 +4,15 @@ use ratatui::{
 };
 
 use crate::portfwd::PortForwardManager;
+use crate::theme::Theme;
 
-pub fn render(f: &mut Frame, manager: &PortForwardManager, input: &str, adding: bool) {
+pub fn render(
+    f: &mut Frame,
+    manager: &PortForwardManager,
+    input: &str,
+    adding: bool,
+    theme: &Theme,
+) {
     let area = f.area();
 
     // Center a popup ~65 cols wide, ~20 rows tall
@@ -19,9 +26,9 @@ pub fn render(f: &mut Frame, manager: &PortForwardManager, input: &str, adding: 
 
     let block = Block::default()
         .title(" Port Forwards ")
-        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_style(Style::default().fg(theme.brand).bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme.border));
 
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -39,12 +46,12 @@ pub fn render(f: &mut Frame, manager: &PortForwardManager, input: &str, adding: 
     if manager.is_empty() {
         let empty = Paragraph::new(Line::styled(
             "  No port forwards configured",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_muted),
         ));
         f.render_widget(empty, chunks[0]);
     } else {
         let header = Row::new(vec!["Dir", "Bind", "Target", "Status"])
-            .style(Style::default().fg(Color::Cyan).bold())
+            .style(Style::default().fg(theme.brand).bold())
             .bottom_margin(1);
 
         let rows: Vec<Row> = manager
@@ -53,9 +60,9 @@ pub fn render(f: &mut Frame, manager: &PortForwardManager, input: &str, adding: 
             .enumerate()
             .map(|(i, fwd)| {
                 let style = if i == manager.selected {
-                    Style::default().fg(Color::Yellow).bold()
+                    Style::default().fg(theme.active_tab).bold()
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme.text_primary)
                 };
                 let status = if fwd.active { "Active" } else { "Inactive" };
                 Row::new(vec![
@@ -85,23 +92,25 @@ pub fn render(f: &mut Frame, manager: &PortForwardManager, input: &str, adding: 
     // Footer
     if adding {
         let input_line = Paragraph::new(Line::from(vec![
-            Span::styled("Format: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Format: ", Style::default().fg(theme.text_muted)),
             Span::styled(
                 "L:bind_port:target_host:target_port  ",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.text_muted),
             ),
-            Span::styled("> ", Style::default().fg(Color::Cyan)),
+            Span::styled("> ", Style::default().fg(theme.brand)),
             Span::raw(input),
-            Span::styled("█", Style::default().fg(Color::Cyan)),
+            Span::styled("█", Style::default().fg(theme.brand)),
         ]));
         f.render_widget(input_line, chunks[1]);
     } else {
         let footer = Paragraph::new(Line::from(vec![
-            Span::styled("a", Style::default().fg(Color::Cyan)),
+            Span::styled("a", Style::default().fg(theme.key_hint)),
             Span::raw(":Add  "),
-            Span::styled("d", Style::default().fg(Color::Cyan)),
+            Span::styled("d", Style::default().fg(theme.key_hint)),
             Span::raw(":Delete  "),
-            Span::styled("Esc", Style::default().fg(Color::Cyan)),
+            Span::styled("t", Style::default().fg(theme.key_hint)),
+            Span::raw(":Theme  "),
+            Span::styled("Esc", Style::default().fg(theme.key_hint)),
             Span::raw(":Close"),
         ]));
         f.render_widget(footer, chunks[1]);

@@ -4,9 +4,10 @@ use ratatui::{
 };
 
 use crate::filetransfer::{FileBrowser, FilePaneFocus};
+use crate::theme::Theme;
 use crate::tui::widgets;
 
-pub fn render(f: &mut Frame, area: Rect, browser: &FileBrowser) {
+pub fn render(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &Theme) {
     f.render_widget(Clear, area);
 
     // Main layout: panes area + transfer bar + footer
@@ -25,24 +26,24 @@ pub fn render(f: &mut Frame, area: Rect, browser: &FileBrowser) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[0]);
 
-    render_local_pane(f, panes[0], browser);
-    render_remote_pane(f, panes[1], browser);
-    render_transfer_bar(f, chunks[1], browser);
-    render_footer(f, chunks[2]);
+    render_local_pane(f, panes[0], browser, theme);
+    render_remote_pane(f, panes[1], browser, theme);
+    render_transfer_bar(f, chunks[1], browser, theme);
+    render_footer(f, chunks[2], theme);
 }
 
-fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
+fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &Theme) {
     let is_active = browser.focus == FilePaneFocus::Local;
     let border_color = if is_active {
-        Color::Yellow
+        theme.active_tab
     } else {
-        Color::Cyan
+        theme.brand
     };
     let title = format!(" Local: {} ", browser.local_path.display());
 
     let block = Block::default()
         .title(title)
-        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_style(Style::default().fg(theme.brand).bold())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
@@ -55,7 +56,7 @@ fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
     // Parent directory entry
     lines.push(Line::from(Span::styled(
         "  ..",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.text_muted),
     )));
 
     for (i, entry) in browser.local_files.iter().enumerate() {
@@ -64,11 +65,14 @@ fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
         }
         let is_selected = i == browser.local_selected && is_active;
         let style = if is_selected {
-            Style::default().fg(Color::Black).bg(Color::Yellow).bold()
+            Style::default()
+                .fg(theme.text_inverse)
+                .bg(theme.active_tab)
+                .bold()
         } else if entry.is_dir {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme.brand)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.text_primary)
         };
 
         let display_name = if entry.is_dir {
@@ -92,18 +96,18 @@ fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
     f.render_widget(paragraph, inner);
 }
 
-fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
+fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &Theme) {
     let is_active = browser.focus == FilePaneFocus::Remote;
     let border_color = if is_active {
-        Color::Yellow
+        theme.active_tab
     } else {
-        Color::Cyan
+        theme.brand
     };
     let title = format!(" Remote: {} ", browser.remote_path);
 
     let block = Block::default()
         .title(title)
-        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_style(Style::default().fg(theme.brand).bold())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
@@ -116,13 +120,13 @@ fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
     // Parent directory entry
     lines.push(Line::from(Span::styled(
         "  ..",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.text_muted),
     )));
 
     if browser.remote_files.is_empty() && browser.status_message.is_none() {
         lines.push(Line::from(Span::styled(
             "  (loading...)",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_muted),
         )));
     }
 
@@ -132,11 +136,14 @@ fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
         }
         let is_selected = i == browser.remote_selected && is_active;
         let style = if is_selected {
-            Style::default().fg(Color::Black).bg(Color::Yellow).bold()
+            Style::default()
+                .fg(theme.text_inverse)
+                .bg(theme.active_tab)
+                .bold()
         } else if entry.is_dir {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme.brand)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.text_primary)
         };
 
         let display_name = if entry.is_dir {
@@ -160,7 +167,7 @@ fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser) {
     f.render_widget(paragraph, inner);
 }
 
-fn render_transfer_bar(f: &mut Frame, area: Rect, browser: &FileBrowser) {
+fn render_transfer_bar(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &Theme) {
     let line = if let Some(ref transfer) = browser.transfer {
         let pct = transfer.percent();
         let dir_str = match transfer.direction {
@@ -171,54 +178,62 @@ fn render_transfer_bar(f: &mut Frame, area: Rect, browser: &FileBrowser) {
         let bar = widgets::bar_gauge(pct, bar_width.max(5));
         let size_str = widgets::format_bytes(transfer.total_bytes);
         Line::from(vec![
-            Span::styled(" Transfer: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" Transfer: ", Style::default().fg(theme.text_muted)),
             Span::styled(
                 format!("{} {} ", dir_str, transfer.filename),
-                Style::default().fg(Color::White),
+                Style::default().fg(theme.text_primary),
             ),
-            Span::styled(bar, Style::default().fg(Color::Green)),
-            Span::styled(format!(" {:.0}%", pct), Style::default().fg(Color::Yellow)),
+            Span::styled(bar, Style::default().fg(theme.status_good)),
+            Span::styled(
+                format!(" {:.0}%", pct),
+                Style::default().fg(theme.status_warn),
+            ),
             Span::styled(
                 format!("  {}", size_str),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.text_muted),
             ),
         ])
     } else if let Some(ref msg) = browser.status_message {
         Line::from(Span::styled(
             format!(" {}", msg),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.status_warn),
         ))
     } else {
-        Line::from(Span::styled(" Ready", Style::default().fg(Color::DarkGray)))
+        Line::from(Span::styled(
+            " Ready",
+            Style::default().fg(theme.text_muted),
+        ))
     };
 
     let paragraph = Paragraph::new(line).block(
         Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(theme.border)),
     );
     f.render_widget(paragraph, area);
 }
 
-fn render_footer(f: &mut Frame, area: Rect) {
+fn render_footer(f: &mut Frame, area: Rect, theme: &Theme) {
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled(" Tab", Style::default().fg(Color::Cyan)),
+        Span::styled(" Tab", Style::default().fg(theme.key_hint)),
         Span::raw(":Switch  "),
-        Span::styled("u", Style::default().fg(Color::Cyan)),
+        Span::styled("u", Style::default().fg(theme.key_hint)),
         Span::raw(":Upload  "),
-        Span::styled("d", Style::default().fg(Color::Cyan)),
+        Span::styled("d", Style::default().fg(theme.key_hint)),
         Span::raw(":Download  "),
-        Span::styled("m", Style::default().fg(Color::Cyan)),
+        Span::styled("m", Style::default().fg(theme.key_hint)),
         Span::raw(":Mkdir  "),
-        Span::styled("Del", Style::default().fg(Color::Cyan)),
+        Span::styled("Del", Style::default().fg(theme.key_hint)),
         Span::raw(":Delete  "),
-        Span::styled("Esc", Style::default().fg(Color::Cyan)),
+        Span::styled("t", Style::default().fg(theme.key_hint)),
+        Span::raw(":Theme  "),
+        Span::styled("Esc", Style::default().fg(theme.key_hint)),
         Span::raw(":Close"),
     ]))
     .block(
         Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(theme.border)),
     );
     f.render_widget(footer, area);
 }

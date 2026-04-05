@@ -157,6 +157,7 @@ The idea is simple: terminal fidelity when you need a shell, operational signal 
 - Public key, password, and SSH agent auth.
 - Encrypted OpenSSH private keys with interactive passphrase prompts.
 - TOFU host key verification with `strict`, `prompt`, and `auto` modes.
+- Five built-in themes with instant switching and persisted preferences.
 - Jump host / ProxyJump support.
 - Local port forwards, live add and remove.
 - Two-pane file browser for upload and download.
@@ -244,6 +245,7 @@ essh session replay <session-id>
 | `Alt+←` / `Alt+→` | Cycle sessions |
 | `Alt+Tab` | Last-used session |
 | `Ctrl+p` | Command palette |
+| `Alt+t` | Cycle theme |
 | `Alt+d` | Detach to dashboard |
 | `Alt+w` | Close session |
 
@@ -269,6 +271,19 @@ essh session replay <session-id>
 | `a` | Add host |
 | `d` | Delete host |
 | `r` | Refresh |
+| `t` | Cycle theme |
+
+---
+
+## Themes
+
+ESSH ships with the same built-in theme set as NetWatch: `dark`, `light`, `solarized`, `dracula`, and `nord`.
+
+Use `t` on dashboard-style views or `Alt+t` from any session to cycle themes instantly. The selected theme is saved in `~/.essh/config.toml` as:
+
+```toml
+theme = "dark"
+```
 
 ---
 

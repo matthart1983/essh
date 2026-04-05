@@ -1,6 +1,7 @@
 use crate::diagnostics::DiagnosticsSnapshot;
 use crate::portfwd::PortForwardManager;
 use crate::session::{Session, SessionState};
+use crate::theme::Theme;
 use crate::tui::widgets;
 use crate::tui::Notification;
 use ratatui::{
@@ -15,11 +16,12 @@ pub fn render_tab_bar(
     sessions: &[Session],
     active_index: usize,
     notifications: &[Notification],
+    theme: &Theme,
 ) {
     let now = chrono::Local::now().format("%H:%M:%S").to_string();
     let mut spans: Vec<Span> = vec![
-        Span::styled(" ESSH ", Style::default().fg(Color::Cyan).bold()),
-        Span::styled("── ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" ESSH ", Style::default().fg(theme.brand).bold()),
+        Span::styled("── ", Style::default().fg(theme.separator)),
     ];
 
     for (i, session) in sessions.iter().enumerate() {
@@ -35,42 +37,48 @@ pub fn render_tab_bar(
                 max
             );
             if i == active_index {
-                spans.push(Span::styled(label, Style::default().fg(Color::Red).bold()));
+                spans.push(Span::styled(
+                    label,
+                    Style::default().fg(theme.status_error).bold(),
+                ));
             } else {
-                spans.push(Span::styled(label, Style::default().fg(Color::Red)));
+                spans.push(Span::styled(label, Style::default().fg(theme.status_error)));
             }
         } else if let SessionState::Disconnected { .. } = &session.state {
             let label = format!("[{}] {} ● Disconn. ", i + 1, session.label);
             if i == active_index {
-                spans.push(Span::styled(label, Style::default().fg(Color::Red).bold()));
+                spans.push(Span::styled(
+                    label,
+                    Style::default().fg(theme.status_error).bold(),
+                ));
             } else {
-                spans.push(Span::styled(label, Style::default().fg(Color::Red)));
+                spans.push(Span::styled(label, Style::default().fg(theme.status_error)));
             }
         } else {
             let label = format!("[{}] {} ", i + 1, session.label);
             if i == active_index {
                 spans.push(Span::styled(
                     label,
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(theme.active_tab).bold(),
                 ));
             } else if has_notifications {
                 spans.push(Span::styled(
                     label,
-                    Style::default().fg(Color::Cyan).underlined(),
+                    Style::default().fg(theme.brand).underlined(),
                 ));
                 spans.push(Span::styled(
                     "! ",
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(theme.active_tab).bold(),
                 ));
             } else if session.has_new_output {
                 spans.push(Span::styled(
                     label,
-                    Style::default().fg(Color::Cyan).underlined(),
+                    Style::default().fg(theme.brand).underlined(),
                 ));
             } else if matches!(session.state, SessionState::Suspended) {
-                spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(label, Style::default().fg(theme.text_muted)));
             } else {
-                spans.push(Span::raw(label));
+                spans.push(Span::styled(label, Style::default().fg(theme.text_primary)));
             }
         }
         spans.push(Span::raw(" "));
@@ -78,13 +86,13 @@ pub fn render_tab_bar(
 
     spans.push(Span::styled(
         format!("── {}", now),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.text_muted),
     ));
 
     let tab_bar = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(theme.border)),
     );
     f.render_widget(tab_bar, area);
 }
@@ -173,6 +181,7 @@ pub fn render_status_bar(
     session: &Session,
     diag: Option<&DiagnosticsSnapshot>,
     pfm: Option<&PortForwardManager>,
+    theme: &Theme,
 ) {
     let mut spans = if let Some(d) = diag {
         let rtt_text = match d.rtt_ms {
@@ -180,24 +189,24 @@ pub fn render_status_bar(
             None => "—".to_string(),
         };
         let quality_str = format!("{:?}", d.quality);
-        let q_color = widgets::quality_color(&quality_str);
+        let q_color = widgets::quality_color(theme, &quality_str);
 
         vec![
-            Span::styled("RTT:", Style::default().fg(Color::DarkGray)),
+            Span::styled("RTT:", Style::default().fg(theme.text_muted)),
             Span::raw(rtt_text),
             Span::raw("  "),
-            Span::styled("↑", Style::default().fg(Color::Green)),
+            Span::styled("↑", Style::default().fg(theme.rx_rate)),
             Span::raw(widgets::format_bytes_rate(d.throughput_up_bps)),
             Span::raw("  "),
-            Span::styled("↓", Style::default().fg(Color::Cyan)),
+            Span::styled("↓", Style::default().fg(theme.tx_rate)),
             Span::raw(widgets::format_bytes_rate(d.throughput_down_bps)),
             Span::raw("  "),
-            Span::styled("Loss:", Style::default().fg(Color::DarkGray)),
+            Span::styled("Loss:", Style::default().fg(theme.text_muted)),
             Span::raw(format!("{:.1}%", d.packet_loss_pct)),
             Span::raw("  "),
             Span::styled(format!("●{}", quality_str), Style::default().fg(q_color)),
             Span::raw("  "),
-            Span::styled("Up:", Style::default().fg(Color::DarkGray)),
+            Span::styled("Up:", Style::default().fg(theme.text_muted)),
             Span::raw(widgets::format_duration_short(d.uptime_secs)),
         ]
     } else {
@@ -219,7 +228,7 @@ pub fn render_status_bar(
                     }
                 }
             },
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_muted),
         )]
     };
 
@@ -228,41 +237,46 @@ pub fn render_status_bar(
         let summary = mgr.summary();
         if !summary.is_empty() {
             spans.push(Span::raw("  "));
-            spans.push(Span::styled("Fwd:", Style::default().fg(Color::DarkGray)));
-            spans.push(Span::styled(summary, Style::default().fg(Color::Green)));
+            spans.push(Span::styled("Fwd:", Style::default().fg(theme.text_muted)));
+            spans.push(Span::styled(
+                summary,
+                Style::default().fg(theme.status_good),
+            ));
         }
     }
 
     let status = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(theme.border)),
     );
     f.render_widget(status, area);
 }
 
 /// Render the session footer with keybindings
-pub fn render_footer(f: &mut Frame, area: Rect) {
+pub fn render_footer(f: &mut Frame, area: Rect, theme: &Theme) {
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled("Alt+←→", Style::default().fg(Color::Cyan)),
+        Span::styled("Alt+←→", Style::default().fg(theme.key_hint)),
         Span::raw(":Switch  "),
-        Span::styled("Alt+s", Style::default().fg(Color::Cyan)),
+        Span::styled("Alt+s", Style::default().fg(theme.key_hint)),
         Span::raw(":Split  "),
-        Span::styled("Alt+m", Style::default().fg(Color::Cyan)),
+        Span::styled("Alt+m", Style::default().fg(theme.key_hint)),
         Span::raw(":Monitor  "),
-        Span::styled("Alt+f", Style::default().fg(Color::Cyan)),
+        Span::styled("Alt+f", Style::default().fg(theme.key_hint)),
         Span::raw(":Files  "),
-        Span::styled("Alt+d", Style::default().fg(Color::Cyan)),
+        Span::styled("Alt+d", Style::default().fg(theme.key_hint)),
         Span::raw(":Detach  "),
-        Span::styled("Alt+w", Style::default().fg(Color::Cyan)),
+        Span::styled("Alt+w", Style::default().fg(theme.key_hint)),
         Span::raw(":Close  "),
-        Span::styled("Alt+h", Style::default().fg(Color::Cyan)),
+        Span::styled("Alt+t", Style::default().fg(theme.key_hint)),
+        Span::raw(":Theme  "),
+        Span::styled("Alt+h", Style::default().fg(theme.key_hint)),
         Span::raw(":Help"),
     ]))
     .block(
         Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(theme.border)),
     );
     f.render_widget(footer, area);
 }

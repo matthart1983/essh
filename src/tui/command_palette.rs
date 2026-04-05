@@ -3,6 +3,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
+use crate::theme::Theme;
+
 use super::{AppView, DashboardTab, HostDisplay, HostStatus};
 use crate::session::Session;
 
@@ -246,7 +248,7 @@ fn fuzzy_score(query: &str, label: &str, detail: &str) -> i32 {
 // Rendering — centered overlay popup
 // ---------------------------------------------------------------------------
 
-pub fn render(frame: &mut Frame, palette: &CommandPalette) {
+pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
     let area = frame.area();
 
     let popup_width = 70u16.min(area.width.saturating_sub(4));
@@ -262,9 +264,9 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette) {
 
     let block = Block::default()
         .title(" Command Palette ")
-        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_style(Style::default().fg(theme.brand).bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.brand));
 
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
@@ -276,9 +278,9 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette) {
     // Input line
     let input_area = Rect::new(inner.x, inner.y, inner.width, 1);
     let input_line = Line::from(vec![
-        Span::styled(" > ", Style::default().fg(Color::Cyan).bold()),
-        Span::styled(&palette.query, Style::default().fg(Color::White)),
-        Span::styled("█", Style::default().fg(Color::Cyan)),
+        Span::styled(" > ", Style::default().fg(theme.brand).bold()),
+        Span::styled(&palette.query, Style::default().fg(theme.text_primary)),
+        Span::styled("█", Style::default().fg(theme.brand)),
     ]);
     frame.render_widget(Paragraph::new(input_line), input_area);
 
@@ -307,16 +309,16 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette) {
 
         let is_selected = ei == palette.selected;
         let bg = if is_selected {
-            Color::DarkGray
+            theme.highlight_bg
         } else {
             Color::Reset
         };
         let label_style = if is_selected {
-            Style::default().fg(Color::Yellow).bold().bg(bg)
+            Style::default().fg(theme.active_tab).bold().bg(bg)
         } else {
-            Style::default().fg(Color::White).bg(bg)
+            Style::default().fg(theme.text_primary).bg(bg)
         };
-        let detail_style = Style::default().fg(Color::DarkGray).bg(bg);
+        let detail_style = Style::default().fg(theme.text_secondary).bg(bg);
 
         // Truncate detail to fit
         let icon_label = format!(" {} {}", entry.icon, entry.label);
@@ -340,7 +342,7 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette) {
         let empty_area = Rect::new(inner.x, list_top, inner.width, 1);
         let msg = Paragraph::new(Line::from(Span::styled(
             "  No matches",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_muted),
         )));
         frame.render_widget(msg, empty_area);
     }

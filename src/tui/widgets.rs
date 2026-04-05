@@ -1,5 +1,7 @@
 use ratatui::style::Color;
 
+use crate::theme::Theme;
+
 /// Format bytes per second into human-readable rate string.
 pub fn format_bytes_rate(bytes_per_sec: f64) -> String {
     if bytes_per_sec >= 1_000_000_000.0 {
@@ -93,13 +95,13 @@ pub fn sparkline_string(data: &[u64], width: usize) -> String {
 
 /// Get color for a percentage value using threshold-based coloring.
 /// 0-50%: Green, 50-80%: Yellow, 80-100%: Red
-pub fn pct_color(pct: f64) -> Color {
+pub fn pct_color(theme: &Theme, pct: f64) -> Color {
     if pct >= 80.0 {
-        Color::Red
+        theme.status_error
     } else if pct >= 50.0 {
-        Color::Yellow
+        theme.status_warn
     } else {
-        Color::Green
+        theme.status_good
     }
 }
 
@@ -112,11 +114,11 @@ pub fn bar_gauge(pct: f64, width: usize) -> String {
 }
 
 /// Get connection quality color.
-pub fn quality_color(quality: &str) -> Color {
+pub fn quality_color(theme: &Theme, quality: &str) -> Color {
     match quality {
-        "Excellent" | "Good" => Color::Green,
-        "Fair" => Color::Yellow,
-        _ => Color::Red,
+        "Excellent" | "Good" => theme.status_good,
+        "Fair" => theme.status_warn,
+        _ => theme.status_error,
     }
 }
 
@@ -162,8 +164,9 @@ mod tests {
 
     #[test]
     fn test_pct_color() {
-        assert_eq!(pct_color(30.0), Color::Green);
-        assert_eq!(pct_color(60.0), Color::Yellow);
-        assert_eq!(pct_color(90.0), Color::Red);
+        let theme = crate::theme::dark();
+        assert_eq!(pct_color(&theme, 30.0), Color::Green);
+        assert_eq!(pct_color(&theme, 60.0), Color::Yellow);
+        assert_eq!(pct_color(&theme, 90.0), Color::Red);
     }
 }

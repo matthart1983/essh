@@ -12,6 +12,7 @@ mod portfwd;
 mod recording;
 mod session;
 mod ssh;
+mod theme;
 mod tui;
 
 use std::io::{self, Read as _, Write as _};
@@ -616,8 +617,9 @@ async fn run_interactive_shell(
 // TUI mode — concurrent sessions
 // ---------------------------------------------------------------------------
 
-async fn run_tui(config: AppConfig) -> anyhow::Result<()> {
+async fn run_tui(mut config: AppConfig) -> anyhow::Result<()> {
     let mut app = App::new(config.session.max_concurrent);
+    app.theme = theme::by_name(&config.theme);
 
     load_hosts_into_app(&mut app, &config)?;
 
@@ -627,7 +629,7 @@ async fn run_tui(config: AppConfig) -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = tui_main_loop(&mut terminal, &mut app, &config).await;
+    let result = tui_main_loop(&mut terminal, &mut app, &mut config).await;
 
     terminal::disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
@@ -638,7 +640,7 @@ async fn run_tui(config: AppConfig) -> anyhow::Result<()> {
 async fn tui_main_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
-    config: &AppConfig,
+    config: &mut AppConfig,
 ) -> anyhow::Result<()> {
     let mut events = EventHandler::new(Duration::from_millis(100));
     let audit = AuditLogger::default_logger();
@@ -922,7 +924,7 @@ enum KeyAction {
 async fn handle_key_event(
     key: crossterm::event::KeyEvent,
     app: &mut App,
-    config: &AppConfig,
+    config: &mut AppConfig,
     audit: &AuditLogger,
     runtimes: &mut Vec<Option<SessionRuntime>>,
     output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
@@ -948,6 +950,7 @@ async fn handle_key_event(
     // Help toggle — intercept before anything else
     if app.show_help {
         match key.code {
+            KeyCode::Char('t') => cycle_theme(app, config),
             KeyCode::Char('?') | KeyCode::Esc => app.show_help = false,
             _ => {}
         }
@@ -1050,6 +1053,11 @@ async fn handle_key_event(
             // Alt+d: detach (go back to dashboard) (∂ is Option+d on macOS)
             KeyCode::Char('d') | KeyCode::Char('∂') => {
                 app.view = AppView::Dashboard;
+                return Ok(KeyAction::Handled);
+            }
+            // Alt+t: cycle theme († is Option+t on macOS)
+            KeyCode::Char('t') | KeyCode::Char('†') => {
+                cycle_theme(app, config);
                 return Ok(KeyAction::Handled);
             }
             // Alt+h or Alt+?: toggle help (˙ is Option+h on macOS)
@@ -1163,6 +1171,11 @@ async fn handle_key_event(
                 app.view = AppView::Dashboard;
                 return Ok(KeyAction::Handled);
             }
+            KeyCode::Char('†') => {
+                // Option+t: cycle theme
+                cycle_theme(app, config);
+                return Ok(KeyAction::Handled);
+            }
             KeyCode::Char('˙') => {
                 // Option+h: toggle help
                 app.show_help = !app.show_help;
@@ -1206,15 +1219,16 @@ async fn handle_key_event(
             handle_dashboard_key(key, app, config, audit, runtimes, output_rxs).await
         }
         AppView::Session => handle_session_key(key, app, runtimes).await,
-        AppView::Monitor => handle_monitor_key(key, app),
-        AppView::PortForwarding => handle_portfwd_key(key, app),
-        AppView::FileBrowser => handle_filebrowser_key(key, app, runtimes).await,
+        AppView::Monitor => handle_monitor_key(key, app, config),
+        AppView::PortForwarding => handle_portfwd_key(key, app, config),
+        AppView::FileBrowser => handle_filebrowser_key(key, app, config, runtimes).await,
     }
 }
 
 async fn handle_filebrowser_key(
     key: crossterm::event::KeyEvent,
     app: &mut App,
+    config: &mut AppConfig,
     runtimes: &mut [Option<SessionRuntime>],
 ) -> anyhow::Result<KeyAction> {
     let browser = match app.file_browser.as_mut() {
@@ -1223,6 +1237,9 @@ async fn handle_filebrowser_key(
     };
 
     match key.code {
+        KeyCode::Char('t') => {
+            cycle_theme(app, config);
+        }
         KeyCode::Tab => {
             browser.toggle_focus();
         }
@@ -1510,7 +1527,11 @@ async fn handle_filebrowser_key(
     Ok(KeyAction::Handled)
 }
 
-fn handle_portfwd_key(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<KeyAction> {
+fn handle_portfwd_key(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    config: &mut AppConfig,
+) -> anyhow::Result<KeyAction> {
     if app.port_forward_adding {
         match key.code {
             KeyCode::Esc => {
@@ -1554,6 +1575,9 @@ fn handle_portfwd_key(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow:
     }
 
     match key.code {
+        KeyCode::Char('t') => {
+            cycle_theme(app, config);
+        }
         KeyCode::Char('a') => {
             app.port_forward_adding = true;
             app.port_forward_input.clear();
@@ -1592,7 +1616,7 @@ fn handle_portfwd_key(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow:
 async fn handle_palette_key(
     key: crossterm::event::KeyEvent,
     app: &mut App,
-    config: &AppConfig,
+    config: &mut AppConfig,
     audit: &AuditLogger,
     runtimes: &mut Vec<Option<SessionRuntime>>,
     output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
@@ -1682,7 +1706,7 @@ async fn handle_palette_key(
 async fn handle_dashboard_key(
     key: crossterm::event::KeyEvent,
     app: &mut App,
-    config: &AppConfig,
+    config: &mut AppConfig,
     audit: &AuditLogger,
     runtimes: &mut Vec<Option<SessionRuntime>>,
     output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
@@ -1730,6 +1754,7 @@ async fn handle_dashboard_key(
             app.search_active = true;
             app.search_query.clear();
         }
+        KeyCode::Char('t') => cycle_theme(app, config),
         KeyCode::Char('r') => {
             load_hosts_into_app(app, config)?;
             app.set_status("Hosts refreshed.".to_string());
@@ -1776,8 +1801,15 @@ async fn handle_session_key(
     Ok(KeyAction::Handled)
 }
 
-fn handle_monitor_key(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<KeyAction> {
+fn handle_monitor_key(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    config: &mut AppConfig,
+) -> anyhow::Result<KeyAction> {
     match key.code {
+        KeyCode::Char('t') => {
+            cycle_theme(app, config);
+        }
         KeyCode::Esc => {
             app.view = AppView::Session;
         }
@@ -1797,6 +1829,18 @@ fn handle_monitor_key(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow:
         _ => {}
     }
     Ok(KeyAction::Handled)
+}
+
+fn cycle_theme(app: &mut App, config: &mut AppConfig) {
+    let next = theme::next_theme_name(&config.theme).to_string();
+    config.theme = next.clone();
+    app.theme = theme::by_name(&next);
+
+    if let Err(err) = config.save() {
+        app.set_status(format!("Theme: {} (not saved: {})", next, err));
+    } else {
+        app.set_status(format!("Theme: {}", next));
+    }
 }
 
 fn ssh_agent_available() -> bool {
