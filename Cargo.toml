@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 # SSH
-russh = "0.57"
+russh = "0.55"
 russh-keys = "0.46"
 
 # Async runtime
