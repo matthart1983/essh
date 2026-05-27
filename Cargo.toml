@@ -1,6 +1,6 @@
 [package]
 name = "essh"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 description = "Enhanced SSH client with concurrent sessions, real-time host diagnostics, and a Netwatch-inspired TUI"
 license = "MIT"
