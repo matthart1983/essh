@@ -63,48 +63,6 @@ pub fn format_duration_short(secs: i64) -> String {
 
 /// Render a sparkline string from sample data using Unicode block characters.
 /// Values are normalized to max value in the dataset (or provided max).
-pub fn sparkline_string(data: &[u64], width: usize) -> String {
-    let blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    if data.is_empty() {
-        return " ".repeat(width);
-    }
-
-    let max = *data.iter().max().unwrap_or(&1).max(&1);
-    let start = if data.len() > width {
-        data.len() - width
-    } else {
-        0
-    };
-    let visible = &data[start..];
-
-    let mut result = String::with_capacity(width);
-    for &val in visible {
-        let idx = if max == 0 {
-            0
-        } else {
-            ((val as f64 / max as f64) * 7.0) as usize
-        };
-        result.push(blocks[idx.min(7)]);
-    }
-    // Pad with spaces if not enough data
-    while result.chars().count() < width {
-        result.insert(0, ' ');
-    }
-    result
-}
-
-/// Get color for a percentage value using threshold-based coloring.
-/// 0-50%: Green, 50-80%: Yellow, 80-100%: Red
-pub fn pct_color(theme: &Theme, pct: f64) -> Color {
-    if pct >= 80.0 {
-        theme.status_error
-    } else if pct >= 50.0 {
-        theme.status_warn
-    } else {
-        theme.status_good
-    }
-}
-
 /// Render a horizontal bar gauge like "████████░░░░░░░░░ 45%"
 /// Returns a string of the bar portion (without the percentage).
 pub fn bar_gauge(pct: f64, width: usize) -> String {
@@ -150,23 +108,9 @@ mod tests {
     }
 
     #[test]
-    fn test_sparkline_string() {
-        let data = vec![0, 25, 50, 75, 100];
-        let s = sparkline_string(&data, 5);
-        assert_eq!(s.chars().count(), 5);
-    }
-
-    #[test]
     fn test_bar_gauge() {
         let bar = bar_gauge(50.0, 10);
         assert_eq!(bar.chars().count(), 10);
     }
-
-    #[test]
-    fn test_pct_color() {
-        let theme = crate::theme::dark();
-        assert_eq!(pct_color(&theme, 30.0), Color::Green);
-        assert_eq!(pct_color(&theme, 60.0), Color::Yellow);
-        assert_eq!(pct_color(&theme, 90.0), Color::Red);
-    }
 }
+

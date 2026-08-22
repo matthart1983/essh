@@ -2,6 +2,7 @@ use std::fmt;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use russh::client::{self, Handle, Msg};
 use russh::keys::agent::client::AgentClient;
@@ -40,6 +41,13 @@ pub struct ConnectConfig {
     pub port: u16,
     pub username: String,
     pub auth: AuthMethod,
+    /// How long to wait for the TCP connect and SSH handshake.
+    ///
+    /// `russh`'s `Config::default()` has no connect timeout, so without this
+    /// an address that silently drops packets waits on the OS — ~75s on
+    /// macOS, unbounded on some networks. That is indistinguishable from a
+    /// hang to anyone watching.
+    pub timeout: Duration,
 }
 
 impl ConnectConfig {
@@ -49,6 +57,7 @@ impl ConnectConfig {
             hostname,
             port: 22,
             username,
+            timeout: Duration::from_secs(12),
             auth,
         }
     }
@@ -127,7 +136,11 @@ impl client::Handler for ClientHandler {
 }
 
 pub struct SshSession {
-    pub handle: Handle<ClientHandler>,
+    /// Shared so background work — the metrics sampler — can hold the same
+    /// connection the session uses. `russh::client::Handle` is not `Clone`,
+    /// and opening a second SSH connection just to sample metrics would
+    /// double the auth cost and the server-side session count.
+    pub handle: Arc<Handle<ClientHandler>>,
     #[allow(dead_code)]
     session_id: String,
     pub jump_host: Option<String>,
@@ -149,8 +162,22 @@ impl SshClient {
             server_banner: server_banner.clone(),
         };
 
-        let mut handle =
-            client::connect(ssh_config, (config.hostname.as_str(), config.port), handler).await?;
+        let mut handle = match tokio::time::timeout(
+            config.timeout,
+            client::connect(ssh_config, (config.hostname.as_str(), config.port), handler),
+        )
+        .await
+        {
+            Ok(r) => r?,
+            Err(_) => {
+                return Err(SshError::Connection(format!(
+                    "no response from {}:{} after {}s",
+                    config.hostname,
+                    config.port,
+                    config.timeout.as_secs()
+                )))
+            }
+        };
 
         let authenticated = match &config.auth {
             AuthMethod::Password(pw) => {
@@ -190,7 +217,7 @@ impl SshClient {
 
         Ok((
             SshSession {
-                handle,
+                handle: Arc::new(handle),
                 session_id,
                 jump_host: None,
             },
@@ -336,7 +363,7 @@ impl SshClient {
 
         Ok((
             SshSession {
-                handle,
+                handle: Arc::new(handle),
                 session_id,
                 jump_host: Some(jump_config.hostname.clone()),
             },
@@ -510,6 +537,7 @@ mod tests {
             port: 2222,
             username: "deploy".to_string(),
             auth: AuthMethod::Agent,
+            timeout: std::time::Duration::from_secs(5),
         };
         let cloned = config.clone();
         assert_eq!(cloned.hostname, config.hostname);
@@ -555,5 +583,59 @@ mod tests {
 
         let err = SshError::Channel("closed".to_string());
         assert_eq!(err.to_string(), "Channel error: closed");
+    }
+}
+
+#[cfg(test)]
+mod connect_timeout_tests {
+    use super::*;
+
+    /// Connecting to an address that silently drops packets must fail on our
+    /// clock, not the OS's.
+    ///
+    /// This is the bug that made ESSH look frozen: typing a `192.168.x.x`
+    /// address that nothing answers left `russh::client::connect` waiting on
+    /// the OS TCP timeout — ~75s on macOS — while the key handler awaited it
+    /// inline on the event loop. No redraw, no keys, no way out.
+    ///
+    /// 192.0.2.0/24 is TEST-NET-1 (RFC 5737): reserved for documentation and
+    /// guaranteed not to be routed, so nothing answers and nothing is
+    /// disturbed by the test.
+    #[tokio::test]
+    async fn an_unroutable_address_fails_on_our_timeout_not_the_os() {
+        let config = ConnectConfig {
+            hostname: "192.0.2.1".to_string(),
+            port: 22,
+            username: "nobody".to_string(),
+            auth: AuthMethod::Agent,
+            timeout: Duration::from_millis(300),
+        };
+
+        let started = std::time::Instant::now();
+        let result = SshClient::connect(&config).await;
+        let elapsed = started.elapsed();
+
+        // `SshSession` is not Debug, so match rather than unwrap_err.
+        let msg = match result {
+            Ok(_) => panic!("an unroutable address must not connect"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "gave up after {elapsed:?} — the timeout is not being applied"
+        );
+        assert!(
+            msg.contains("no response from 192.0.2.1:22"),
+            "the error should name the host and the wait, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn the_configured_timeout_is_clamped_above_zero() {
+        // A zero would fail every connection instantly and read as a broken
+        // network rather than a bad setting.
+        let mut cfg = crate::config::AppConfig::default();
+        cfg.general.connect_timeout = 0;
+        assert!(cfg.connect_timeout() >= Duration::from_secs(1));
     }
 }

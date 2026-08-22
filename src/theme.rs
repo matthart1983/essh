@@ -2,6 +2,9 @@ use ratatui::prelude::Color;
 
 /// Semantic color roles for the ESSH TUI.
 #[derive(Debug, Clone)]
+// Some slots are unused by the current screens but are part of the theme
+// contract every palette must fill, so they stay.
+#[allow(dead_code)]
 pub struct Theme {
     pub name: &'static str,
 
@@ -54,27 +57,35 @@ pub fn next_theme_name(current: &str) -> &'static str {
     THEME_NAMES[(idx + 1) % THEME_NAMES.len()]
 }
 
+/// The ESSH 2.0 theme: the *Watch 2.0 family palette from the design
+/// handoff. Every value comes from [`crate::design`] rather than being
+/// respelled here, so the design system stays the single source.
 pub fn dark() -> Theme {
+    use crate::design as d;
     Theme {
         name: "dark",
-        brand: Color::Cyan,
-        active_tab: Color::Yellow,
-        inactive_tab: Color::DarkGray,
-        border: Color::DarkGray,
-        separator: Color::DarkGray,
-        text_primary: Color::White,
-        text_secondary: Color::Gray,
-        text_muted: Color::DarkGray,
-        text_inverse: Color::Black,
-        status_good: Color::Green,
-        status_warn: Color::Yellow,
-        status_error: Color::Red,
-        status_info: Color::Cyan,
-        rx_rate: Color::Green,
-        tx_rate: Color::Blue,
-        key_hint: Color::Yellow,
-        selection_bg: Color::Rgb(40, 40, 60),
-        highlight_bg: Color::Rgb(60, 60, 80),
+        brand: d::CYAN,
+        active_tab: d::WHITE,
+        inactive_tab: d::DIM,
+        // FAINT, not RULE. `RULE` (#1c282e) is the handoff's 1px hairline;
+        // as a full box-drawing cell on #0c1418 it is invisible, which is why
+        // the panels read as floating labels. This is the terminal-weight
+        // equivalent, and matches netwatch's DarkGray.
+        border: d::FAINT,
+        separator: d::RULE,
+        text_primary: d::FG,
+        text_secondary: d::DIM,
+        text_muted: d::DIM,
+        text_inverse: d::BG,
+        status_good: d::GREEN,
+        status_warn: d::AMBER,
+        status_error: d::RED,
+        status_info: d::CYAN,
+        rx_rate: d::CYAN,
+        tx_rate: d::VIOLET,
+        key_hint: d::CYAN,
+        selection_bg: d::ROW_SELECTED_BG,
+        highlight_bg: d::ROW_SELECTED_BG,
     }
 }
 

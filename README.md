@@ -58,7 +58,7 @@ ESSH is for people who manage real systems and want their SSH client to act like
 
 ## Demo
 
-![ESSH Demo](demo.gif)
+![ESSH Demo](docs/media/essh-demo.gif)
 
 <p align="center">
   <sub>Dashboard, multi-session terminal, host monitor, split pane, command palette, file browser, and port forwarding in one flow.</sub>
@@ -138,12 +138,109 @@ The idea is simple: terminal fidelity when you need a shell, operational signal 
 
 ## Feature Highlights
 
+### Your ssh_config, not a copy of it
+
+`essh` with no arguments opens a launcher over every host you already have —
+aliases from `~/.ssh/config` (no import step), ESSH's own config, and hosts
+you have connected to before.
+
+```
+❯ pdb
+❯ prod-db            deploy@10.0.0.5
+  prod-db-replica    deploy@10.0.0.6
+```
+
+`Include`, `Match`, wildcard and negated `Host` patterns, `ProxyJump`,
+`ProxyCommand`, `IdentityFile` and percent-token expansion are all parsed.
+What ESSH does *not* honour natively is stated rather than ignored:
+
+```sh
+essh config ssh              # what ESSH makes of your config
+essh config resolve prod-db  # like `ssh -G`, so you can diff the two
+```
+
+Hosts reached through `ProxyCommand` or `ControlMaster` are marked
+*via system ssh* in the launcher, so you know before you connect.
+
+### Why a host will not connect
+
+```sh
+$ essh why prod-db
+Could not connect to prod-db
+
+Config    ✓  prod-db → 10.0.0.5:22
+Bastion   ✓  bastion → 10.0.0.2:22 in 4ms
+DNS       ✓  10.0.0.5
+TCP:22    ✗  timed out after 5s
+SSH          not probed
+```
+
+Four states, not two. A rung ESSH never reached shows as *not probed*, never
+as a tick — a ladder that claims a check it did not run points you away from
+the actual fault. Authentication failures are named specifically: *no key
+offered*, *key rejected*, and *the server refused the key's algorithm* look
+identical in OpenSSH's output and need three different fixes.
+
+### Workspaces
+
+```sh
+essh workspace save production bastion prod-api-01 prod-db \
+  --on-connect 'tmux new -A -s essh'
+essh workspace open production
+```
+
+ESSH does not provide server-side persistence and does not pretend to — so
+`--on-connect` wires up the tool that does. Restore is partial by default and
+says so: *"restored 2 of 3 sessions in production — prod-db did not
+connect"*, with the reason from the ladder above.
+
+### Benchmarks
+
+`essh bench` measures the paths with real deadlines — config parsing on
+launch, launcher ranking per keystroke, VT throughput, divergence recompute —
+and prints what it deliberately does not measure locally.
+
+
+### Divergence — is this host the same as its peers?
+
+You have forty web servers. Thirty-nine are fine and one has a different
+kernel, a hand-edited `nginx.conf`, or a disk quietly filling. A list of green
+dots structurally cannot show you that.
+
+ESSH tags hosts into peer sets, collects the same facts from each over SSH
+exec channels — no agent — and scores every host by how far it sits from the
+group's consensus:
+
+```
+94.7% of 170 facet-checks agree across role=web
+  3 facets diverge across 2 hosts
+
+web-07   kernel        6.1.0-15 · 39 of 40 peers have 6.1.0-18
+web-39   disk /        95 · median 42 · you are p98
+```
+
+The scoring is derived, not guessed. Categorical facets score
+`1 - (hosts sharing my value / hosts with a value)`, so being alone scores 1.0.
+Numeric facets are flagged by the Tukey fence, so a fleet whose disks vary
+normally does not report all forty hosts as diverging.
+
+Three rules keep it honest:
+
+- **Agreement collapses.** Facets where everyone matches become one dim line.
+- **Unprobed is not agreement.** A host with no facts is named separately and
+  excluded from every denominator.
+- **Verdicts cite evidence.** A verdict names what co-occurred, never an
+  invented cause, and lists the facets it was derived from.
+
+Press `D` on the Hosts or Fleet tab.
+
 ### Multi-Session Without the Mess
 
 - Up to 9 concurrent SSH sessions.
-- Instant switching with `Alt+1-9`, `Alt+←/→`, and `Alt+Tab`.
-- Split-pane terminal plus host monitor with `Alt+s`.
+- Instant switching with `^A 1-9`, `^A ←/→`, and `^A Tab`.
+- Split-pane terminal plus host monitor with `^A s`.
 - Scrollback preserved across reconnects.
+- Terminal fidelity first: Alt goes to the shell, not to ESSH.
 
 ### Remote Insight Without an Agent
 
@@ -242,29 +339,52 @@ essh session replay <session-id>
 
 ## Keyboard Flow
 
-### Global
+ESSH claims exactly one key while a shell has focus: the **prefix**, `Ctrl+A`
+by default. Everything else goes to the remote.
+
+This matters because `Alt+f` and `Alt+b` are readline word-motion, `Alt+d` is
+kill-word and `Alt+.` is yank-last-argument. Earlier versions bound twelve
+`Alt` combinations and swallowed all of them, which quietly broke word motion
+for anyone who uses it. Alt is now forwarded as the ESC prefix the far end
+expects.
+
+Press the prefix twice to send the literal key through, so nothing is
+unreachable. Change it with `prefix_key` under `[session]` in
+`~/.essh/config.toml`.
+
+### In a session — prefix, then the key
+
+| Key | Action |
+|---|---|
+| `^A` `^A` | Send a literal `Ctrl+A` to the shell |
+| `^A` `1` - `9` | Jump to session |
+| `^A` `←` / `→` | Cycle sessions |
+| `^A` `Tab` | Last-used session |
+| `^A` `m` | Host monitor |
+| `^A` `s` | Split vertically (side by side) |
+| `^A` `S` | Split horizontally (stacked) |
+| `^A` `o` | Move focus between panes |
+| `^A` `M` | Terminal + host monitor split |
+| `^A` `[` / `]` | Resize split |
+| `^A` `f` | File browser |
+| `^A` `p` | Port forwarding |
+| `^A` `d` | Detach to dashboard |
+| `^A` `w` | Close session |
+| `^A` `t` | Cycle theme |
+| `^A` `h` | Help overlay |
+
+### Outside a session
+
+No shell has focus in the dashboard, monitor or browsers, so the `Alt`
+shortcuts still work directly there.
 
 | Key | Action |
 |---|---|
 | `?` / `Alt+h` | Help overlay |
 | `Alt+1` - `Alt+9` | Jump to session |
 | `Alt+←` / `Alt+→` | Cycle sessions |
-| `Alt+Tab` | Last-used session |
 | `Ctrl+p` | Command palette |
-| `Alt+t` | Cycle theme |
-| `Alt+d` | Detach to dashboard |
-| `Alt+w` | Close session |
-
-### Session Ops
-
-| Key | Action |
-|---|---|
-| `Alt+m` | Host monitor |
-| `Alt+s` | Split pane |
-| `Alt+[` / `Alt+]` | Resize split |
-| `Alt+f` | File browser |
-| `Alt+p` | Port forwarding |
-| `Alt+r` | Rename tab |
+| `D` | Divergence overlay for the selected host |
 
 ### Dashboard
 

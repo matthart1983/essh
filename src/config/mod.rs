@@ -55,6 +55,16 @@ pub struct GeneralConfig {
     pub tofu_policy: TofuPolicy,
     pub cache_ttl: String,
     pub log_level: String,
+    /// Open the launcher on start rather than the dashboard.
+    pub launcher: bool,
+    /// Seconds to wait for a connection before giving up.
+    ///
+    /// Without a bound, connecting to an address that silently drops packets
+    /// — a typo'd `192.168.x.x`, a host behind a firewall that DROPs rather
+    /// than REJECTs — waits on the OS TCP timeout, which is ~75s on macOS and
+    /// can be far longer. The UI has nothing to show during that, so it reads
+    /// as a freeze.
+    pub connect_timeout: u64,
 }
 
 impl Default for GeneralConfig {
@@ -65,6 +75,8 @@ impl Default for GeneralConfig {
             tofu_policy: TofuPolicy::default(),
             cache_ttl: "30d".to_string(),
             log_level: "info".to_string(),
+            launcher: true,
+            connect_timeout: 12,
         }
     }
 }
@@ -99,6 +111,9 @@ pub struct SessionConfig {
     pub max_concurrent: usize,
     pub scrollback_lines: usize,
     pub notification_patterns: Vec<String>,
+    /// Key that puts ESSH into command mode while a shell has focus.
+    /// Press it twice to send the literal key to the remote.
+    pub prefix_key: String,
 }
 
 impl Default for SessionConfig {
@@ -111,6 +126,7 @@ impl Default for SessionConfig {
             max_concurrent: 9,
             scrollback_lines: 10000,
             notification_patterns: Vec::new(),
+            prefix_key: "ctrl-a".to_string(),
         }
     }
 }
@@ -185,6 +201,17 @@ impl Default for HostMonitorConfig {
     }
 }
 
+impl AppConfig {
+    /// The connect timeout, as a `Duration`.
+    ///
+    /// Clamped to at least a second: a zero here would make every connection
+    /// fail instantly and look like a broken network rather than a bad
+    /// setting.
+    pub fn connect_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.general.connect_timeout.max(1))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FleetConfig {
@@ -201,6 +228,41 @@ impl Default for FleetConfig {
             probe_interval: 60,
             probe_timeout: 5,
             latency_history_samples: 30,
+        }
+    }
+}
+
+/// Which extra facets to compare across peers.
+///
+/// Config-file hashes and package versions are the two facets that cannot have
+/// a universal default — every fleet runs different things — so they are
+/// opinionated-but-overridable. The defaults cover the services people
+/// actually ask "are these the same?" about.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DivergenceConfig {
+    pub enabled: bool,
+    /// Files whose content hash is compared. Unreadable ones report why
+    /// rather than being dropped.
+    pub config_paths: Vec<String>,
+    /// Packages whose version is compared.
+    pub packages: Vec<String>,
+}
+
+impl Default for DivergenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            config_paths: vec![
+                "/etc/nginx/nginx.conf".to_string(),
+                "/etc/ssh/sshd_config".to_string(),
+                "/etc/resolv.conf".to_string(),
+            ],
+            packages: vec![
+                "openssh-server".to_string(),
+                "nginx".to_string(),
+                "docker.io".to_string(),
+            ],
         }
     }
 }
@@ -276,6 +338,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub fleet: FleetConfig,
     #[serde(default)]
+    pub divergence: DivergenceConfig,
+    #[serde(default)]
     pub hosts: Vec<HostEntry>,
     #[serde(default)]
     pub host_groups: Vec<HostGroup>,
@@ -292,6 +356,7 @@ impl Default for AppConfig {
             audit: AuditConfig::default(),
             host_monitor: HostMonitorConfig::default(),
             fleet: FleetConfig::default(),
+            divergence: DivergenceConfig::default(),
             hosts: Vec::new(),
             host_groups: Vec::new(),
         }

@@ -1,18 +1,27 @@
 mod audit;
+mod bench;
 mod cache;
 mod cli;
 mod config;
+mod design;
+mod diagnose;
 mod diagnostics;
+mod divergence;
 mod event;
 mod filetransfer;
+mod format;
+mod launcher;
 mod fleet;
 mod monitor;
+mod panes;
 mod notify;
 mod portfwd;
 mod recording;
 mod session;
 mod ssh;
+mod sshconfig;
 mod theme;
+mod workspace;
 mod tui;
 
 use std::io::{self, Read as _, Write as _};
@@ -30,7 +39,7 @@ use ratatui::prelude::*;
 
 use audit::{AuditEventType, AuditLogger};
 use cache::{CacheDb, HostKeyStatus};
-use cli::{AuditAction, Cli, Commands, ConfigAction, HostsAction, KeysAction, SessionAction};
+use cli::{WorkspaceAction, AuditAction, Cli, Commands, ConfigAction, HostsAction, KeysAction, SessionAction};
 use config::{AppConfig, TofuPolicy};
 use diagnostics::DiagnosticsEngine;
 use event::{AppEvent, EventHandler};
@@ -69,6 +78,13 @@ struct TuiState {
     notification_matcher: NotificationMatcher,
     fleet_prober: fleet::FleetProber,
     fleet_probe_task: Option<FleetProbeTask>,
+    /// A connection the user asked for, to be made *after* the next draw.
+    ///
+    /// Connecting is awaited inline on the event loop, so the frame showing
+    /// "connecting to X" has to be painted before the await starts —
+    /// otherwise the first thing the user sees is the screen freezing, with
+    /// no indication that anything is happening or to what host.
+    pending_connect: Option<HostDisplay>,
 }
 
 type FleetProbeTask = tokio::task::JoinHandle<Vec<(String, u16, fleet::ProbeResult)>>;
@@ -170,6 +186,7 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
                         port,
                         username: user.clone(),
                         auth: prompt_password_auth(&user, &host)?,
+                        timeout: config.connect_timeout(),
                     };
 
                     connect_and_shell(connect_config, &config, &audit).await?;
@@ -409,6 +426,120 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
             run_on_group(&config, &group, &command).await?;
         }
 
+        Commands::Workspace { action } => {
+            let dir = workspace::Workspace::default_dir();
+            match action {
+                WorkspaceAction::List => {
+                    let names = workspace::Workspace::list_in(&dir);
+                    if names.is_empty() {
+                        println!("No workspaces yet.");
+                        println!();
+                        println!("  essh workspace save production bastion prod-api-01 prod-db");
+                    }
+                    for n in names {
+                        match workspace::Workspace::load_from(&dir, &n) {
+                            Ok(ws) => println!(
+                                "  {:<20} {} sessions{}",
+                                ws.name,
+                                ws.sessions.len(),
+                                ws.description
+                                    .map(|d| format!("  — {}", d))
+                                    .unwrap_or_default()
+                            ),
+                            Err(e) => println!("  {:<20} unreadable: {}", n, e),
+                        }
+                    }
+                }
+                WorkspaceAction::Save {
+                    name,
+                    hosts,
+                    on_connect,
+                } => {
+                    let ws = workspace::Workspace {
+                        name: name.clone(),
+                        layout: workspace::Layout::Tabs,
+                        description: None,
+                        sessions: hosts
+                            .iter()
+                            .map(|h| workspace::WorkspaceSession {
+                                host: h.clone(),
+                                user: None,
+                                port: None,
+                                on_connect: on_connect.clone(),
+                            })
+                            .collect(),
+                    };
+                    let path = ws.save_in(&dir)?;
+                    println!("Saved {} ({} sessions) to {}", name, ws.sessions.len(), path.display());
+                    if on_connect.is_none() {
+                        println!();
+                        println!(
+                            "note: restoring gives fresh shells in $HOME. To restore actual work,"
+                        );
+                        println!(
+                            "      add --on-connect 'tmux new -A -s essh' — ESSH does not provide"
+                        );
+                        println!("      server-side persistence and does not pretend to.");
+                    }
+                }
+                WorkspaceAction::Show { name } => {
+                    let ws = workspace::Workspace::load_from(&dir, &name)?;
+                    println!("{}  ({:?} layout)", ws.name, ws.layout);
+                    if let Some(d) = &ws.description {
+                        println!("{}", d);
+                    }
+                    println!();
+                    for s in &ws.sessions {
+                        let target = match (&s.user, s.port) {
+                            (Some(u), Some(p)) => format!("{}@{}:{}", u, s.host, p),
+                            (Some(u), None) => format!("{}@{}", u, s.host),
+                            (None, Some(p)) => format!("{}:{}", s.host, p),
+                            (None, None) => s.host.clone(),
+                        };
+                        println!("  {}", target);
+                        if let Some(c) = &s.on_connect {
+                            println!("      on connect: {}", c);
+                        }
+                    }
+                }
+                WorkspaceAction::Remove { name } => {
+                    if workspace::Workspace::delete_in(&dir, &name)? {
+                        println!("Removed workspace {}", name);
+                    } else {
+                        println!("No workspace named {}", name);
+                    }
+                }
+                WorkspaceAction::Open { name } => {
+                    // Validate before entering the TUI so a typo fails fast
+                    // and readably rather than on a blank screen.
+                    let ws = workspace::Workspace::load_from(&dir, &name)?;
+                    println!("Opening {} ({} sessions)…", ws.name, ws.sessions.len());
+                    return run_tui_with_workspace(config, ws).await;
+                }
+            }
+        }
+
+        Commands::Bench => bench::run_all(),
+
+        Commands::Why {
+            target,
+            port,
+            timeout,
+        } => {
+            let t = build_diagnose_target(&target, port);
+            let d = diagnose::diagnose(&t, std::time::Duration::from_secs(timeout)).await;
+            if d.succeeded() {
+                println!("{} reachable", t.alias);
+                println!();
+                for r in &d.rungs {
+                    println!("{:<10} {}  {}", r.label, r.status.symbol(), r.status.detail());
+                }
+            } else {
+                print!("{}", d);
+                std::process::exit(1);
+            }
+        }
+
         Commands::Config { action } => match action {
             ConfigAction::Edit => {
                 let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
@@ -429,6 +560,14 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
                     "Default config written to {}",
                     AppConfig::data_dir().join("config.toml").display()
                 );
+            }
+            ConfigAction::Ssh { path } => {
+                let path = path.unwrap_or_else(sshconfig::default_path);
+                print_ssh_config_check(&path);
+            }
+            ConfigAction::Resolve { host, path } => {
+                let path = path.unwrap_or_else(sshconfig::default_path);
+                print_ssh_config_resolution(&path, &host);
             }
         },
 
@@ -577,6 +716,7 @@ async fn connect_and_shell_with_auth_candidates(
             port,
             username: username.clone(),
             auth,
+            timeout: app_config.connect_timeout(),
         };
 
         match connect_and_shell(connect_config, app_config, audit).await {
@@ -692,11 +832,41 @@ async fn run_interactive_shell(
 // TUI mode — concurrent sessions
 // ---------------------------------------------------------------------------
 
-async fn run_tui(mut config: AppConfig) -> anyhow::Result<()> {
+async fn run_tui(config: AppConfig) -> anyhow::Result<()> {
+    run_tui_inner(config, None).await
+}
+
+/// `essh workspace open <name>` — restore a saved set of sessions.
+async fn run_tui_with_workspace(
+    config: AppConfig,
+    ws: workspace::Workspace,
+) -> anyhow::Result<()> {
+    run_tui_inner(config, Some(ws)).await
+}
+
+async fn run_tui_inner(
+    mut config: AppConfig,
+    pending_workspace: Option<workspace::Workspace>,
+) -> anyhow::Result<()> {
     let mut app = App::new(config.session.max_concurrent);
+    app.prefix_key = config.session.prefix_key.clone();
     app.theme = theme::by_name(&config.theme);
 
     load_hosts_into_app(&mut app, &config)?;
+    load_launcher_candidates(&mut app, &config);
+
+    // §2's fast path — launch → search → connect — starts at the launcher.
+    // Esc from there drops to the dashboard, and `launcher = false` in
+    // [general] restores v1's behaviour of opening straight into it.
+    if config.general.launcher {
+        app.view = AppView::Launcher;
+    }
+    // A workspace restore goes straight to the sessions; the launcher would
+    // be in the way of something the user has already chosen.
+    if pending_workspace.is_some() {
+        app.view = AppView::Dashboard;
+        app.pending_workspace = pending_workspace;
+    }
 
     io::stdout().execute(EnterAlternateScreen)?;
     terminal::enable_raw_mode()?;
@@ -738,13 +908,36 @@ async fn tui_main_loop(
             config.fleet.latency_history_samples,
         ),
         fleet_probe_task: None,
+        pending_connect: None,
     };
 
     loop {
+        // Something else had the terminal — a password prompt, $EDITOR — so
+        // ratatui's diff baseline is stale. Repaint everything or the screen
+        // comes back with characters missing.
+        if event::take_needs_full_redraw() {
+            terminal.clear()?;
+        }
+
         // Draw
         terminal.draw(|frame| {
             tui::render(frame, app);
         })?;
+
+        // A connection requested last iteration. The "connecting" frame is now
+        // on screen, so it is safe to block here.
+        if let Some(host) = tui_state.pending_connect.take() {
+            open_session(
+                app,
+                config,
+                &audit,
+                &host,
+                &mut runtimes,
+                &mut session_output_rxs,
+            )
+            .await?;
+            continue;
+        }
 
         // Poll session output (non-blocking drain from all active sessions)
         for (i, rx_opt) in session_output_rxs.iter_mut().enumerate() {
@@ -833,6 +1026,67 @@ async fn tui_main_loop(
             }
             AppEvent::Tick => {
                 tick_count += 1;
+                app.hud.tick();
+
+                // Begin a pending workspace restore. The work itself is
+                // spread across ticks below so the UI keeps rendering.
+                if let Some(ws) = app.pending_workspace.take() {
+                    app.workspace_queue = ws.sessions.iter().cloned().collect();
+                    app.workspace_report = Some(workspace::RestoreReport {
+                        workspace: ws.name.clone(),
+                        outcomes: Vec::new(),
+                    });
+                    app.set_status(format!(
+                        "restoring {} — {} sessions",
+                        ws.name,
+                        ws.sessions.len()
+                    ));
+                }
+
+                // One host per tick. Each is pre-probed with a short timeout
+                // so an unreachable host costs seconds, not a TCP timeout,
+                // and fails with a reason rather than a stall.
+                if let Some(session) = app.workspace_queue.pop_front() {
+                    let outcome = restore_one_session(
+                        app,
+                        config,
+                        &audit,
+                        &session,
+                        &mut runtimes,
+                        &mut session_output_rxs,
+                    )
+                    .await;
+
+                    if let Some(report) = app.workspace_report.as_mut() {
+                        report.outcomes.push((session.host.clone(), outcome));
+                        let done = report.outcomes.len();
+                        let total = done + app.workspace_queue.len();
+                        let summary = report.summary();
+                        let name = report.workspace.clone();
+                        if app.workspace_queue.is_empty() {
+                            for (host, why) in report.failed() {
+                                tracing::warn!(workspace = %name, host = %host, reason = %why,
+                                    "workspace session did not connect");
+                            }
+                            app.set_status(summary.clone());
+                            if app.session_manager.has_sessions() {
+                                app.view = AppView::Session;
+                                // The shell has no status row, so the result
+                                // is announced by the HUD instead.
+                                app.hud.reset();
+                                app.hud.on_change(
+                                    tui::hud::Reason::Notice(summary),
+                                    tui::hud::Vitals::default(),
+                                );
+                            }
+                        } else {
+                            app.set_status(format!(
+                                "restoring {} — {} of {}",
+                                name, done, total
+                            ));
+                        }
+                    }
+                }
 
                 if let Some(task) = tui_state.fleet_probe_task.take() {
                     if task.is_finished() {
@@ -870,21 +1124,25 @@ async fn tui_main_loop(
                     }
                 }
 
-                // Collect host metrics every 20 ticks (2s)
-                if tick_count.is_multiple_of(20)
-                    && (app.view == AppView::Monitor
-                        || (app.view == AppView::Session && app.split_pane))
-                {
+                // Publish whatever the background samplers have collected.
+                //
+                // Sampling itself runs in its own task per session — see
+                // `spawn_metric_sampler`. Two things were wrong with doing it
+                // here: `collect().await` runs a command on the remote host,
+                // so every sample stalled the whole UI for as long as the
+                // round trip took; and it only ran while the monitor was on
+                // screen, so opening the monitor always began with "waiting
+                // for first sample" and a visible pause. Copying out of the
+                // shared snapshots is a memcpy and can happen every tick.
+                if tick_count.is_multiple_of(5) {
                     if let Some(i) = app.session_manager.active_index {
                         if let Some(Some(rt)) = runtimes.get(i) {
                             if let Some(ref mon) = rt.monitor {
-                                let handle = &rt.ssh_session.handle;
                                 let metrics_arc = mon.metrics();
                                 let cpu_h = mon.cpu_history();
                                 let mem_h = mon.mem_history();
                                 let rx_h = mon.net_rx_history();
                                 let tx_h = mon.net_tx_history();
-                                let _ = mon.collect(handle).await;
 
                                 if let Some(slot) = app.session_metrics.get_mut(i) {
                                     *slot = Some(metrics_arc.read().await.clone());
@@ -900,6 +1158,120 @@ async fn tui_main_loop(
                                 }
                                 if let Some(h) = app.session_net_tx_history.get_mut(i) {
                                     *h = tx_h.read().await.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Collect divergence facets. These change on the timescale of a
+                // package upgrade, not a tick, so a 600-tick (60s) refresh is
+                // plenty — 40 hosts × 17 facets must not become a thundering
+                // herd. Unlike metrics, this runs whatever view is showing,
+                // because the Hosts and Fleet tabs are where divergence is read.
+                //
+                // A newly connected host is the exception: waiting up to a
+                // minute before it has any facts makes the Hosts list say
+                // "never probed" about a host you are looking at right now. So
+                // every 30 ticks (3s) we also sweep sessions that have no facts
+                // yet — a one-off per host, not a poll.
+                let refresh_all = tick_count.is_multiple_of(600);
+                if refresh_all || tick_count.is_multiple_of(30) {
+                    let sessions: Vec<(usize, String, u16)> = app
+                        .session_manager
+                        .sessions
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| matches!(s.state, SessionState::Active))
+                        .map(|(i, s)| (i, s.hostname.clone(), s.port))
+                        .filter(|(_, hostname, port)| {
+                            refresh_all
+                                || app
+                                    .host_name_for(hostname, *port)
+                                    .is_none_or(|n| !app.host_facts.contains_key(&n))
+                        })
+                        .collect();
+
+                    for (i, hostname, port) in sessions {
+                        let Some(Some(rt)) = runtimes.get(i) else {
+                            continue;
+                        };
+                        // Reuse the platform the metrics collector detected if
+                        // it has one. It usually will not: metrics only sweep
+                        // while the monitor or split view is open, so gating
+                        // divergence on that made facets collect *only* if you
+                        // happened to visit the monitor first. Probe `uname`
+                        // ourselves when it is unknown — once per host.
+                        let platform = match &rt.monitor {
+                            Some(mon) => mon.platform().await,
+                            None => monitor::Platform::Undetected,
+                        };
+                        let platform = if platform == monitor::Platform::Undetected {
+                            let raw = divergence::collect::probe_uname(&rt.ssh_session.handle)
+                                .await
+                                .unwrap_or_default();
+                            monitor::Platform::from_uname(&raw)
+                        } else {
+                            platform
+                        };
+                        if !platform.is_supported() {
+                            continue;
+                        }
+                        let Some(name) = app.host_name_for(&hostname, port) else {
+                            continue;
+                        };
+
+                        let facts = divergence::collect::collect_facts(
+                            &rt.ssh_session.handle,
+                            &name,
+                            &platform,
+                            &config.divergence.config_paths,
+                            &config.divergence.packages,
+                        )
+                        .await;
+                        // Record what was collectable here, so the overlay
+                        // reports the comparison actually attempted rather
+                        // than the size of the facet table.
+                        let (usable, total) = divergence::collect::collectable_count(
+                            &platform,
+                            &config.divergence.config_paths,
+                            &config.divergence.packages,
+                        );
+                        let privileged = divergence::collect::privileged_count(
+                            &platform,
+                            &config.divergence.config_paths,
+                            &config.divergence.packages,
+                        );
+                        app.host_coverage
+                            .insert(name.clone(), (usable, total, privileged));
+                        app.host_platforms.insert(name.clone(), platform);
+                        app.host_facts.insert(name, facts);
+                    }
+                    app.recompute_divergence();
+
+                    // Raise the HUD when the focused host's divergence
+                    // changes. This is the only instrumentation allowed over
+                    // a shell, and it states the reason in words.
+                    if app.view == AppView::Session {
+                        if let Some(idx) = app.session_manager.active_index {
+                            if let Some(session) = app.session_manager.sessions.get(idx) {
+                                if let Some(name) =
+                                    app.host_name_for(&session.hostname, session.port)
+                                {
+                                    if let Some(text) = app.divergence_headline(&name) {
+                                        let vitals = app
+                                            .session_diagnostics
+                                            .get(idx)
+                                            .and_then(|d| d.as_ref())
+                                            .map(|d| tui::hud::Vitals {
+                                                rtt_ms: d.rtt_ms,
+                                                down_bps: Some(d.throughput_down_bps),
+                                                loss_pct: Some(d.packet_loss_pct),
+                                            })
+                                            .unwrap_or_default();
+                                        app.hud
+                                            .on_change(tui::hud::Reason::Diverged(text), vitals);
+                                    }
                                 }
                             }
                         }
@@ -952,10 +1324,15 @@ async fn tui_main_loop(
                     if let Some(session) = app.session_manager.sessions.get_mut(i) {
                         session.state = SessionState::Reconnecting { attempt, max };
                     }
-                    app.set_status(format!(
-                        "Reconnecting to {} ({}/{})...",
+                    let notice = format!(
+                        "reconnecting to {} — attempt {} of {}",
                         connect_config.hostname, attempt, max
-                    ));
+                    );
+                    app.set_status(notice.clone());
+                    // A link state change is exactly what the HUD is for:
+                    // transient, over the shell, stating why in words.
+                    app.hud
+                        .on_change(tui::hud::Reason::Link(notice), tui::hud::Vitals::default());
 
                     // Attempt reconnect
                     match reconnect_session(
@@ -1098,23 +1475,48 @@ async fn handle_key_event(
         return handle_palette_key(key, app, config, audit, runtimes, output_rxs).await;
     }
 
-    // Ctrl+P: open command palette (from any view)
-    if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        let mut palette = tui::command_palette::CommandPalette::new();
-        palette.update(
-            &app.hosts,
-            &app.session_manager.sessions,
-            app.session_manager.has_sessions(),
-        );
-        app.command_palette = Some(palette);
+    // Ctrl+P opens the palette only where no shell is listening. In a session
+    // it belongs to readline (previous history), and the hint strip promises
+    // that every key we do not name goes to the shell. F10 is the binding
+    // that works everywhere.
+    if key.code == KeyCode::Char('p')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && !shell_has_focus(app)
+    {
+        open_command_palette(app);
         return Ok(KeyAction::Handled);
+    }
+
+    // Divergence overlay — Esc or D closes it, everything else passes through
+    if app.show_divergence {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('D') | KeyCode::Char('q') => {
+                app.show_divergence = false;
+                return Ok(KeyAction::Handled);
+            }
+            _ => {}
+        }
     }
 
     // Help toggle — intercept before anything else
     if app.show_help {
         match key.code {
             KeyCode::Char('t') => cycle_theme(app, config),
-            KeyCode::Char('?') | KeyCode::Esc => app.show_help = false,
+            KeyCode::Char('?') | KeyCode::Esc => {
+                app.show_help = false;
+                app.help_scroll = 0;
+            }
+            // The reference is taller than a short terminal; without this the
+            // keys past the fold are unreachable and invisible.
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.help_scroll = app.help_scroll.saturating_add(1)
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.help_scroll = app.help_scroll.saturating_sub(1)
+            }
+            KeyCode::PageDown => app.help_scroll = app.help_scroll.saturating_add(10),
+            KeyCode::PageUp => app.help_scroll = app.help_scroll.saturating_sub(10),
+            KeyCode::Home => app.help_scroll = 0,
             _ => {}
         }
         return Ok(KeyAction::Handled);
@@ -1127,27 +1529,110 @@ async fn handle_key_event(
         }
     }
 
-    if let Some(idx) = plain_option_symbol_session_switch_index(&key.code) {
-        if app.session_manager.switch_to(idx) {
-            if let Some(session) = app.session_manager.sessions.get(idx) {
-                let label = session.label.clone();
-                app.notifications.retain(|n| n.session_label != label);
-            }
-            app.view = AppView::Session;
-        }
-        return Ok(KeyAction::Handled);
-    }
+    let shell_focused = shell_has_focus(app);
 
-    let is_alt = has_meta_modifier(key.modifiers);
-
-    // Global keybindings (work in all views)
-    if is_alt {
-        if let Some(idx) = alt_session_switch_index(&key.code) {
+    // macOS Option-symbol shortcuts (¡™£ for session 1-3, and so on). These
+    // are real characters a shell may legitimately want, so they are only
+    // intercepted when no shell has focus.
+    if !shell_focused {
+        if let Some(idx) = plain_option_symbol_session_switch_index(&key.code) {
+            // A different host: let its state raise the HUD afresh.
+            app.hud.reset();
             if app.session_manager.switch_to(idx) {
                 if let Some(session) = app.session_manager.sessions.get(idx) {
                     let label = session.label.clone();
                     app.notifications.retain(|n| n.session_label != label);
                 }
+                // Arriving on a host is when "this one is the odd one out"
+                // is most worth knowing.
+                announce_divergence(app, idx);
+                app.view = AppView::Session;
+            }
+            return Ok(KeyAction::Handled);
+        }
+    }
+
+    // ── Function keys: one press, no prefix ──────────────────────────────
+    //
+    // The prefix exists because a shell owns every Ctrl combination — `Ctrl+D`
+    // is EOF, `Ctrl+M` *is* Enter, `Ctrl+C` interrupts — so claiming them
+    // would break the terminal ESSH is supposed to be faithful to. Function
+    // keys are the one range a shell does not use, so they can be direct.
+    //
+    // They are translated into the command-mode keys rather than duplicating
+    // the handlers, so there is one implementation of "open the monitor".
+    //
+    // The known cost: a full-screen remote app that uses function keys — htop,
+    // mc — will not see them. The prefix still reaches everything, and those
+    // apps are rarer than the shell keys the alternative would have cost.
+    let mut key = key;
+    let mut from_function_key = false;
+    if let Some(code) = function_key_command(&key) {
+        if code == KeyCode::Char('\u{1}') {
+            open_command_palette(app);
+            return Ok(KeyAction::Handled);
+        }
+        if code == KeyCode::Char('?') {
+            app.show_help = !app.show_help;
+            if !app.show_help {
+                app.help_scroll = 0;
+            }
+            return Ok(KeyAction::Handled);
+        }
+        key = crossterm::event::KeyEvent::new(code, KeyModifiers::NONE);
+        from_function_key = true;
+    }
+
+    let is_alt = has_meta_modifier(key.modifiers);
+
+    // ── Command mode ─────────────────────────────────────────────────────
+    //
+    // Terminal fidelity first: while a shell has focus, ESSH claims exactly
+    // one key — the prefix — and everything else is the shell's. v1 claimed
+    // twelve Alt combinations, including `Alt+f` and `Alt+d`, which are
+    // readline word-motions, and `Alt+.`, which is yank-last-argument.
+    //
+    // Pressing the prefix twice sends the literal key through, so nothing is
+    // permanently unreachable.
+    let mut command_mode = from_function_key || (is_alt && !shell_focused);
+
+    if app.prefix_pending {
+        app.prefix_pending = false;
+        if is_prefix_key(&key, config) {
+            // Double tap: fall through and let the shell receive it.
+            return handle_session_key(key, app, runtimes).await;
+        }
+        command_mode = true;
+    } else if shell_focused && is_prefix_key(&key, config) {
+        app.prefix_pending = true;
+        // Deliberately no status message: the session footer already turns
+        // into the prefix menu, and writing here would overwrite whatever
+        // result the user is currently reading.
+        return Ok(KeyAction::Handled);
+    } else if shell_focused && is_alt {
+        // Straight to the shell, ESC-prefixed by key_to_bytes.
+        return handle_session_key(key, app, runtimes).await;
+    }
+
+    // Global keybindings
+    if command_mode {
+        if let Some(idx) = alt_session_switch_index(&key.code) {
+            // Keep the pane highlight and the session receiving keystrokes in
+            // agreement; otherwise the focused border points at one pane
+            // while typing goes to another.
+            if let Some(tree) = app.panes.as_mut() {
+                tree.set_focus(idx);
+            }
+            // A different host: let its state raise the HUD afresh.
+            app.hud.reset();
+            if app.session_manager.switch_to(idx) {
+                if let Some(session) = app.session_manager.sessions.get(idx) {
+                    let label = session.label.clone();
+                    app.notifications.retain(|n| n.session_label != label);
+                }
+                // Arriving on a host is when "this one is the odd one out"
+                // is most worth knowing.
+                announce_divergence(app, idx);
                 app.view = AppView::Session;
             }
             return Ok(KeyAction::Handled);
@@ -1202,24 +1687,96 @@ async fn handle_key_event(
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+s: toggle split-pane view (ß is Option+s on macOS)
+            // Split the current pane with the *next* session, per §3.
+            // Lower-case splits vertically (side by side), upper-case
+            // horizontally (stacked) — the same shape tmux uses.
             KeyCode::Char('s') | KeyCode::Char('ß') => {
+                split_current_pane(app, panes::SplitDirection::Vertical);
+                return Ok(KeyAction::Handled);
+            }
+            KeyCode::Char('S') => {
+                split_current_pane(app, panes::SplitDirection::Horizontal);
+                return Ok(KeyAction::Handled);
+            }
+            // Move focus between panes.
+            KeyCode::Char('o') => {
+                if let Some(tree) = app.panes.as_mut() {
+                    tree.focus_next();
+                    let f = tree.focus();
+                    app.session_manager.switch_to(f);
+                }
+                return Ok(KeyAction::Handled);
+            }
+            // Report how many panes are on screen, since with four live
+            // terminals it is not always obvious.
+            KeyCode::Char('?') if app.panes.as_ref().is_some_and(|t| !t.is_single()) => {
+                if let Some(tree) = app.panes.as_ref() {
+                    app.set_status(format!(
+                        "{} panes on screen · ^A o next · ^A O previous · ^A [ ] resize",
+                        tree.len()
+                    ));
+                }
+                return Ok(KeyAction::Handled);
+            }
+            // The command menu, reachable through the prefix as well as F10.
+            // The handoff binds it to ⌘K; `k` keeps that shape for anyone
+            // whose terminal swallows function keys.
+            KeyCode::Char('k') => {
+                open_command_palette(app);
+                return Ok(KeyAction::Handled);
+            }
+            // Open the launcher again to start another session.
+            //
+            // It used to be reachable only at startup, so after the first
+            // connection the ssh_config hosts were gone for the rest of the
+            // run — and with them any way to open a second session. Which
+            // made the pane split look broken: it correctly refused, because
+            // there was genuinely nothing to split into and no way to make
+            // one.
+            KeyCode::Char('n') => {
+                app.launcher.query.clear();
+                refresh_launcher(app);
+                app.view = AppView::Launcher;
+                return Ok(KeyAction::Handled);
+            }
+            // Toggle the terminal+monitor split, which is a different thing
+            // from a session split and keeps its own key.
+            KeyCode::Char('M') => {
                 if app.session_manager.has_sessions() {
                     app.split_pane = !app.split_pane;
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+[: shrink terminal pane (more monitor)
+            // `[` and `]` resize whichever split is in front: a session
+            // split if one exists, otherwise the terminal/monitor split.
             KeyCode::Char('[') => {
-                if app.split_pane {
-                    app.split_pane_pct = app.split_pane_pct.saturating_sub(5).max(20);
+                match app.panes.as_mut().filter(|t| !t.is_single()) {
+                    Some(tree) => tree.resize_focused(-0.05),
+                    None => {
+                        if app.split_pane {
+                            app.split_pane_pct = app.split_pane_pct.saturating_sub(5).max(20);
+                        }
+                    }
                 }
                 return Ok(KeyAction::Handled);
             }
-            // Alt+]: grow terminal pane (less monitor)
             KeyCode::Char(']') => {
-                if app.split_pane {
-                    app.split_pane_pct = (app.split_pane_pct + 5).min(80);
+                match app.panes.as_mut().filter(|t| !t.is_single()) {
+                    Some(tree) => tree.resize_focused(0.05),
+                    None => {
+                        if app.split_pane {
+                            app.split_pane_pct = (app.split_pane_pct + 5).min(80);
+                        }
+                    }
+                }
+                return Ok(KeyAction::Handled);
+            }
+            // Focus the previous pane.
+            KeyCode::Char('O') => {
+                if let Some(tree) = app.panes.as_mut() {
+                    tree.focus_prev();
+                    let f = tree.focus();
+                    app.session_manager.switch_to(f);
                 }
                 return Ok(KeyAction::Handled);
             }
@@ -1306,6 +1863,18 @@ async fn handle_key_event(
                     app.session_manager.remove_session(idx);
                     app.remove_session_tracking(idx);
 
+                    // Keep the pane tree in step: drop the pane, then shift
+                    // every higher index down. Skipping the renumber would
+                    // leave panes rendering a different session's terminal.
+                    if let Some(tree) = app.panes.as_mut() {
+                        if tree.contains(idx) && !tree.close(idx) {
+                            app.panes = None;
+                        }
+                    }
+                    if let Some(tree) = app.panes.as_mut() {
+                        tree.reindex_after_removal(idx);
+                    }
+
                     if !app.session_manager.has_sessions() {
                         app.view = AppView::Dashboard;
                     }
@@ -1317,8 +1886,10 @@ async fn handle_key_event(
     }
 
     // macOS: Option key sends Unicode chars without ALT modifier flag.
-    // Catch them here so they work regardless of terminal emulator config.
-    if !is_alt {
+    // Catch them here so they work regardless of terminal emulator config —
+    // but only when no shell has focus, since ƒ and ∂ are characters a user
+    // may genuinely want to type.
+    if !is_alt && !shell_focused {
         match key.code {
             KeyCode::Char('µ') => {
                 // Option+m: toggle monitor
@@ -1386,8 +1957,16 @@ async fn handle_key_event(
         }
     }
 
+    // Any key other than a second `d` cancels a pending host deletion, so a
+    // confirmation can never be answered by accident.
+    if app.pending_delete.is_some() && key.code != KeyCode::Char('d') {
+        app.pending_delete = None;
+        app.set_status("Delete cancelled.".to_string());
+    }
+
     // View-specific keybindings
     match app.view {
+        AppView::Launcher => handle_launcher_key(key, app, tui_state),
         AppView::Dashboard => {
             handle_dashboard_key(key, app, config, audit, runtimes, output_rxs, tui_state).await
         }
@@ -1751,7 +2330,7 @@ fn handle_portfwd_key(
         KeyCode::Char('t') => {
             cycle_theme(app, config);
         }
-        KeyCode::Char('a') => {
+        KeyCode::Char('a') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.port_forward_adding = true;
             app.port_forward_input.clear();
         }
@@ -1832,6 +2411,8 @@ async fn handle_palette_key(
                         }
                     }
                     PaletteAction::SwitchSession(idx) => {
+                        // A different host: let its state raise the HUD afresh.
+                        app.hud.reset();
                         if app.session_manager.switch_to(idx) {
                             if let Some(session) = app.session_manager.sessions.get(idx) {
                                 let label = session.label.clone();
@@ -1894,10 +2475,23 @@ async fn handle_dashboard_key(
                 app.select_first_filtered();
             }
             KeyCode::Enter => {
-                app.search_active = false;
-                // Connect to the currently selected (first matching) host
-                if let Some(host) = app.selected_host().cloned() {
-                    open_session(app, config, audit, &host, runtimes, output_rxs).await?;
+                // Only connect to a host the filter actually matched.
+                //
+                // `select_first_filtered` leaves the selection untouched when
+                // nothing matches, so connecting to "the selected host" here
+                // would open whatever was highlighted *before* the search —
+                // you type one hostname and land on another. For an SSH
+                // client that is the worst possible failure: it succeeds,
+                // silently, against the wrong machine.
+                let matched = app.filtered_host_indices();
+                if matched.is_empty() {
+                    let q = app.search_query.clone();
+                    app.set_status(format!("no host matches \"{q}\""));
+                } else {
+                    app.search_active = false;
+                    if let Some(host) = app.selected_host().cloned() {
+                        open_session(app, config, audit, &host, runtimes, output_rxs).await?;
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -1918,8 +2512,23 @@ async fn handle_dashboard_key(
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return Ok(KeyAction::Quit)
         }
-        KeyCode::Down | KeyCode::Char('j') => app.next_host(),
-        KeyCode::Up | KeyCode::Char('k') => app.prev_host(),
+        // Navigation follows the visible tab. It used to always drive the
+        // host list, so on the Sessions tab the arrows moved a cursor nobody
+        // could see, on a list nobody was looking at.
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.dashboard_tab == DashboardTab::Sessions {
+                app.next_session_row();
+            } else {
+                app.next_host();
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.dashboard_tab == DashboardTab::Sessions {
+                app.prev_session_row();
+            } else {
+                app.prev_host();
+            }
+        }
         KeyCode::Char('1') => app.dashboard_tab = DashboardTab::Sessions,
         KeyCode::Char('2') => app.dashboard_tab = DashboardTab::Hosts,
         KeyCode::Char('3') => app.dashboard_tab = DashboardTab::Fleet,
@@ -1927,6 +2536,13 @@ async fn handle_dashboard_key(
         KeyCode::Char('/') => {
             app.search_active = true;
             app.search_query.clear();
+        }
+        // The launcher is where the ssh_config hosts live; the dashboard only
+        // knows hosts it has already seen.
+        KeyCode::Char('n') => {
+            app.launcher.query.clear();
+            refresh_launcher(app);
+            app.view = AppView::Launcher;
         }
         KeyCode::Char('e') if app.dashboard_tab == DashboardTab::Config => {
             match edit_config_from_tui(config) {
@@ -1937,11 +2553,24 @@ async fn handle_dashboard_key(
                 Err(err) => app.set_status(format!("Config edit failed: {}", err)),
             }
         }
-        KeyCode::Char('a') => {
+        // Guarded on CONTROL: the command prefix is only intercepted while a
+        // shell has focus, so in the dashboard `Ctrl+A` reached this arm and
+        // opened the Add Host dialog.
+        KeyCode::Char('a') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.add_host_active = true;
             app.add_host_input.clear();
             app.add_host_error = None;
             app.add_host_original = None;
+        }
+        // 'D' opens the divergence overlay for the selected host. Upper-case
+        // so it does not collide with 'd' (delete host).
+        KeyCode::Char('D')
+            if matches!(
+                app.dashboard_tab,
+                DashboardTab::Hosts | DashboardTab::Fleet
+            ) =>
+        {
+            app.show_divergence = !app.show_divergence;
         }
         KeyCode::Char('e') if app.dashboard_tab == DashboardTab::Hosts => {
             if let Some(host) = app.selected_host().cloned() {
@@ -1959,7 +2588,21 @@ async fn handle_dashboard_key(
             app.set_status("Hosts refreshed.".to_string());
         }
         KeyCode::Char('d') => {
+            // Deleting a host rewrites the user's config file and drops the
+            // cached host key. One keystroke doing that with no confirmation
+            // and no undo is how a configured host silently disappears —
+            // which is exactly what happened during development.
             if let Some(host) = app.selected_host().cloned() {
+                if app.pending_delete.as_deref() != Some(host.name.as_str()) {
+                    app.pending_delete = Some(host.name.clone());
+                    app.set_status(format!(
+                        "Delete {} ({}:{}) from config and cache? Press d again to confirm, any other key to cancel.",
+                        host.name, host.hostname, host.port
+                    ));
+                    return Ok(KeyAction::Handled);
+                }
+                app.pending_delete = None;
+
                 let removed_from_config = remove_config_host(config, &host.hostname, host.port);
                 if removed_from_config {
                     config.save()?;
@@ -1982,8 +2625,17 @@ async fn handle_dashboard_key(
             }
         }
         KeyCode::Enter => {
-            if let Some(host) = app.selected_host().cloned() {
-                // Open a new session to this host
+            // On the Sessions tab, Enter goes *back to* the highlighted
+            // session rather than opening a new connection to a host that
+            // the tab is not even showing.
+            if app.dashboard_tab == DashboardTab::Sessions {
+                app.clamp_session_row();
+                let idx = app.selected_session;
+                if app.session_manager.switch_to(idx) {
+                    app.hud.reset();
+                    app.view = AppView::Session;
+                }
+            } else if let Some(host) = app.selected_host().cloned() {
                 open_session(app, config, audit, &host, runtimes, output_rxs).await?;
             }
         }
@@ -1997,13 +2649,8 @@ async fn handle_session_key(
     app: &mut App,
     runtimes: &mut [Option<SessionRuntime>],
 ) -> anyhow::Result<KeyAction> {
-    // In session view, forward all non-Alt keys to the remote shell
-    if has_meta_modifier(key.modifiers)
-        || plain_option_symbol_session_switch_index(&key.code).is_some()
-    {
-        return Ok(KeyAction::Handled); // already handled in global
-    }
-
+    // Everything reaching here belongs to the shell, Alt included —
+    // key_to_bytes turns Alt into the ESC prefix the far end expects.
     if let Some(idx) = app.session_manager.active_index {
         if let Some(Some(rt)) = runtimes.get(idx) {
             // Convert key event to bytes and send to remote
@@ -2049,6 +2696,35 @@ fn handle_monitor_key(
 
 fn has_meta_modifier(modifiers: KeyModifiers) -> bool {
     modifiers.intersects(KeyModifiers::ALT | KeyModifiers::META)
+}
+
+/// Whether a live remote shell currently owns the keyboard.
+///
+/// When it does, ESSH takes only its prefix key and forwards everything else.
+/// In the dashboard, monitor and browsers there is no shell to steal from, so
+/// the direct Alt bindings stay — they cost nothing there.
+fn shell_has_focus(app: &App) -> bool {
+    app.view == AppView::Session && app.session_manager.has_sessions()
+}
+
+/// Does this key event match the configured command prefix?
+///
+/// Defaults to `Ctrl+A`, the tmux/screen model. Every single-key prefix
+/// collides with *something* in readline — Ctrl+A is beginning-of-line — which
+/// is why the double-tap escape below exists: press it twice to send the real
+/// key through.
+fn is_prefix_key(key: &crossterm::event::KeyEvent, config: &AppConfig) -> bool {
+    let spec = config.session.prefix_key.to_lowercase();
+    let (want_ctrl, want_char) = match spec.strip_prefix("ctrl-") {
+        Some(rest) => (true, rest.chars().next()),
+        None => (false, spec.chars().next()),
+    };
+    let Some(want_char) = want_char else {
+        return false;
+    };
+    let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&want_char))
+        && has_ctrl == want_ctrl
 }
 
 fn plain_option_symbol_session_switch_index(code: &KeyCode) -> Option<usize> {
@@ -2119,18 +2795,70 @@ fn configured_auth_methods(
     default_key: Option<&str>,
     has_ssh_agent: bool,
 ) -> anyhow::Result<Vec<AuthMethod>> {
-    Ok(auth_candidates_from_paths(
+    configured_auth_methods_for(None, host_key, default_key, has_ssh_agent)
+}
+
+/// Auth candidates for a host, honouring `IdentityFile` from `~/.ssh/config`.
+///
+/// Without the alias, a host defined the ordinary way —
+/// `Host web-01 / IdentityFile ~/.ssh/id_web` — offers no key at all: ESSH
+/// looked only at its own config and at `~/.ssh/id_*`, found neither, and
+/// fell through to a password prompt for a host that has perfectly good key
+/// auth. `IdentityFile` is the single most common thing in an ssh_config, so
+/// ignoring it made ESSH unusable with an existing setup.
+fn configured_auth_methods_for(
+    alias: Option<&str>,
+    host_key: Option<&str>,
+    default_key: Option<&str>,
+    has_ssh_agent: bool,
+) -> anyhow::Result<Vec<AuthMethod>> {
+    let mut identity_files = Vec::new();
+    if let Some(alias) = alias {
+        let cfg_path = sshconfig::default_path();
+        if cfg_path.exists() {
+            let local_user = std::env::var("USER").unwrap_or_default();
+            let resolved = sshconfig::SshConfig::load(&cfg_path).resolve(alias, &local_user);
+            for f in &resolved.identity_files {
+                identity_files.push(PathBuf::from(shellexpand::tilde(f).to_string()));
+            }
+        }
+    }
+
+    Ok(auth_candidates_from_paths_with_identities(
         host_key,
         default_key,
+        &identity_files,
         &cached_key_paths(),
         &default_ssh_key_paths(),
         has_ssh_agent,
     ))
 }
 
+// Kept as the no-IdentityFile form used by the CLI paths and the tests.
+#[allow(dead_code)]
 fn auth_candidates_from_paths(
     host_key: Option<&str>,
     default_key: Option<&str>,
+    cached_key_paths: &[PathBuf],
+    standard_key_paths: &[PathBuf],
+    has_ssh_agent: bool,
+) -> Vec<AuthMethod> {
+    auth_candidates_from_paths_with_identities(
+        host_key,
+        default_key,
+        &[],
+        cached_key_paths,
+        standard_key_paths,
+        has_ssh_agent,
+    )
+}
+
+/// As above, with `IdentityFile` entries tried after an explicit host key but
+/// before the generic `~/.ssh/id_*` sweep — the order `ssh` itself uses.
+fn auth_candidates_from_paths_with_identities(
+    host_key: Option<&str>,
+    default_key: Option<&str>,
+    identity_files: &[PathBuf],
     cached_key_paths: &[PathBuf],
     standard_key_paths: &[PathBuf],
     has_ssh_agent: bool,
@@ -2152,6 +2880,10 @@ fn auth_candidates_from_paths(
             &mut seen_paths,
             PathBuf::from(shellexpand::tilde(key).to_string()),
         );
+    }
+
+    for path in identity_files {
+        add_key_auth_candidate(&mut methods, &mut seen_paths, path.clone());
     }
 
     for path in cached_key_paths {
@@ -2224,6 +2956,11 @@ fn prompt_key_passphrase(path: &Path) -> anyhow::Result<String> {
 }
 
 fn prompt_secret_from_tui(prompt: &str) -> anyhow::Result<String> {
+    // Take stdin back from the event reader first. Without this the reader
+    // thread consumes every keystroke, `prompt_password` never sees input,
+    // and the app hangs on what looks like a blank screen — with no way out,
+    // because Ctrl-C goes to the reader too.
+    let _input = crate::event::pause_input();
     let _restore_tui = scopeguard::guard((), |_| {
         io::stdout().execute(EnterAlternateScreen).ok();
         terminal::enable_raw_mode().ok();
@@ -2240,6 +2977,9 @@ fn prompt_key_passphrase_from_tui(path: &Path) -> anyhow::Result<String> {
 }
 
 fn edit_config_from_tui(config: &mut AppConfig) -> anyhow::Result<()> {
+    // Same contention as the password prompt: an editor cannot read a stdin
+    // that the event reader is draining.
+    let _input = crate::event::pause_input();
     let _restore_tui = scopeguard::guard((), |_| {
         io::stdout().execute(EnterAlternateScreen).ok();
         terminal::enable_raw_mode().ok();
@@ -2300,8 +3040,37 @@ fn prompt_password_auth(username: &str, hostname: &str) -> anyhow::Result<AuthMe
     Ok(AuthMethod::Password(password))
 }
 
-fn prompt_password_auth_from_tui(username: &str, hostname: &str) -> anyhow::Result<AuthMethod> {
-    let prompt = format!("{}@{}'s password: ", username, hostname);
+fn prompt_password_auth_from_tui(
+    username: &str,
+    hostname: &str,
+    tried: &[AuthMethod],
+    reason: &str,
+) -> anyhow::Result<AuthMethod> {
+    // Say why we are asking. Dropping a bare password prompt on someone whose
+    // key auth just failed gives them no way to tell a wrong username from a
+    // wrong key from an unreachable host — and if they have no password, the
+    // prompt is indistinguishable from a hang.
+    let mut preamble = format!("\r\nKey authentication failed for {username}@{hostname}.\r\n");
+    if !reason.is_empty() {
+        preamble.push_str(&format!("  {reason}\r\n"));
+    }
+    let keys: Vec<String> = tried
+        .iter()
+        .filter_map(|m| match m {
+            AuthMethod::KeyFile { path, .. } => Some(path.display().to_string()),
+            AuthMethod::Agent => Some("ssh-agent".to_string()),
+            _ => None,
+        })
+        .collect();
+    if keys.is_empty() {
+        preamble.push_str("  No key was offered: nothing in ssh-agent, no IdentityFile,\r\n");
+        preamble.push_str("  and no key configured for this host.\r\n");
+    } else {
+        preamble.push_str(&format!("  Tried: {}\r\n", keys.join(", ")));
+    }
+    preamble.push_str("  Check the user and key for this host, or press Ctrl-C to cancel.\r\n\r\n");
+
+    let prompt = format!("{preamble}{username}@{hostname}'s password: ");
     let password = prompt_secret_from_tui(&prompt)?;
     Ok(AuthMethod::Password(password))
 }
@@ -2336,6 +3105,7 @@ async fn connect_session_with_auth_candidates(
             port,
             username: username.clone(),
             auth,
+            timeout: config.connect_timeout(),
         };
 
         match connect_session_for_host(app, config, host, &connect_config).await {
@@ -2394,6 +3164,7 @@ async fn connect_session_for_host(
             port: jump_port,
             username: jump_user,
             auth: jump_auth,
+            timeout: config.connect_timeout(),
         };
 
         app.set_status(format!("Connecting via jump host {}...", jump_name));
@@ -2430,7 +3201,8 @@ async fn open_session(
         config.general.default_user.clone().unwrap_or_else(whoami)
     };
 
-    let auth_candidates = configured_auth_methods(
+    let auth_candidates = configured_auth_methods_for(
+        (!host.name.is_empty()).then_some(host.name.as_str()),
         host_entry.and_then(|entry| entry.key.as_deref()),
         config.general.default_key.as_deref(),
         ssh_agent_available(),
@@ -2465,6 +3237,9 @@ async fn open_session(
 
     app.view = AppView::Session;
 
+    // Kept for the failure message: the candidate list is what makes
+    // "key auth failed" actionable rather than mysterious.
+    let tried_auth = auth_candidates.clone();
     let mut connect_result = connect_session_with_auth_candidates(
         app,
         config,
@@ -2477,13 +3252,18 @@ async fn open_session(
     .await;
 
     if matches!(connect_result, Err(ref err) if should_try_next_auth_candidate(err)) {
-        match prompt_password_auth_from_tui(&user, &host.hostname) {
+        let why = match &connect_result {
+            Err(e) => e.to_string(),
+            Ok(_) => String::new(),
+        };
+        match prompt_password_auth_from_tui(&user, &host.hostname, &tried_auth, &why) {
             Ok(auth) => {
                 let password_connect_config = ConnectConfig {
                     hostname: host.hostname.clone(),
                     port: host.port,
                     username: user.clone(),
                     auth,
+                    timeout: config.connect_timeout(),
                 };
                 connect_result =
                     connect_session_for_host(app, config, host, &password_connect_config)
@@ -2524,15 +3304,44 @@ async fn open_session(
                         )?;
                     }
                 }
-                HostKeyStatus::Changed { .. } => {
-                    // Auto-accept in TUI mode for now (could add dialog later)
-                    db.trust_host(
+                HostKeyStatus::Changed {
+                    old_fingerprint,
+                    old_last_seen,
+                } => {
+                    // Refuse. A changed host key is the signal that host key
+                    // verification exists to raise, and silently re-trusting
+                    // it — as this did — makes the whole mechanism
+                    // decorative. OpenSSH refuses here too, and so do we:
+                    // the old key must be removed deliberately, by a person
+                    // who has confirmed why it changed.
+                    audit.log_host_key_event(
+                        &session_id,
                         &connect_config.hostname,
-                        None,
                         connect_config.port,
+                        AuditEventType::HostKeyChanged,
                         &fingerprint,
-                        "ssh",
-                    )?;
+                    );
+                    ssh_session.close().await.ok();
+                    app.set_status(format!(
+                        "REFUSED: host key for {} changed (last seen {}). \
+                         Known {}, offered {}. Confirm out of band, then \
+                         `essh hosts remove {}` to accept the new key.",
+                        connect_config.hostname,
+                        crate::format::relative_time(&old_last_seen),
+                        old_fingerprint,
+                        fingerprint,
+                        connect_config.hostname,
+                    ));
+                    tracing::error!(
+                        host = %connect_config.hostname,
+                        "{}",
+                        diagnose::explain_host_key_change(
+                            &old_fingerprint,
+                            &fingerprint,
+                            &connect_config.hostname
+                        )
+                    );
+                    return Ok(());
                 }
             }
             db.update_last_seen(&connect_config.hostname, connect_config.port)?;
@@ -2656,6 +3465,13 @@ async fn open_session(
                 AuditEventType::SessionStart,
             );
 
+            // Start sampling immediately, in the background, whether or not
+            // the monitor is on screen. By the time the user presses F2 the
+            // history is already there.
+            if let Some(ref mon) = monitor {
+                spawn_metric_sampler(mon.clone(), ssh_session.handle.clone());
+            }
+
             // Store runtime
             let runtime = SessionRuntime {
                 ssh_session,
@@ -2675,19 +3491,107 @@ async fn open_session(
             runtimes[idx] = Some(runtime);
             output_rxs[idx] = Some(output_rx);
 
-            app.set_status(format!("Connected to {}", label));
+            // The session appearing is the success feedback. Leaving a
+            // status here would park "Connected to web-01" over the key hints
+            // for the first seconds of every session — exactly when someone
+            // most needs to see how to reach a command.
+            app.status_message = None;
+            app.status_set_at = None;
+            let _ = &label;
         }
         Err(e) => {
-            if let Some(session) = app.session_manager.sessions.get_mut(idx) {
-                session.state = SessionState::Disconnected {
-                    reason: e.to_string(),
-                };
+            // A session that never connected is not a session. Leaving it as
+            // a tab gives a shell-less pane with no retry and no stated way
+            // out — which is indistinguishable from a hang. Take it away and
+            // put the user back where they can try again.
+            app.session_manager.remove_session(idx);
+            app.remove_session_tracking(idx);
+            if idx < runtimes.len() {
+                runtimes.remove(idx);
             }
-            app.set_status(format!("Connection failed: {}", e));
+            if idx < output_rxs.len() {
+                output_rxs.remove(idx);
+            }
+            app.clamp_session_row();
+
+            app.view = if app.session_manager.has_sessions() {
+                AppView::Session
+            } else {
+                AppView::Launcher
+            };
+            app.launcher.query.clear();
+            refresh_launcher(app);
+            app.set_status(explain_connect_failure(&user, &host.hostname, &e.to_string()));
         }
     }
 
     Ok(())
+}
+
+/// Turn a connection failure into something the user can act on.
+///
+/// "Password is incorrect" is often a lie by omission: when *both* the key and
+/// the password are refused for the same account, the account name is the
+/// likelier culprit — the server rejects every credential for a user that
+/// cannot log in, whatever the credential was.
+fn explain_connect_failure(user: &str, hostname: &str, err: &str) -> String {
+    let lower = err.to_lowercase();
+    if lower.contains("auth") || lower.contains("password") || lower.contains("denied") {
+        format!(
+            "{user}@{hostname} refused every credential — check the username as well as the \
+             password; a wrong user rejects a correct password"
+        )
+    } else {
+        format!("could not connect to {user}@{hostname}: {err}")
+    }
+}
+
+/// Open the command palette, populated with the current hosts and sessions.
+fn open_command_palette(app: &mut App) {
+    let mut palette = tui::command_palette::CommandPalette::new();
+    palette.update(
+        &app.hosts,
+        &app.session_manager.sessions,
+        app.session_manager.has_sessions(),
+    );
+    app.command_palette = Some(palette);
+}
+
+/// Sample a host's metrics continuously, off the event loop.
+///
+/// Each sample runs a command on the remote host. Awaiting that in the draw
+/// loop stalls the entire UI for the round trip — noticeably on anything but
+/// a LAN — and doing it only while the monitor is visible means the monitor
+/// always opens empty and fills in a second later.
+///
+/// The collector is a bundle of `Arc`s, so the task writes into the same
+/// snapshots the UI reads; the loop just copies them out.
+///
+/// The task ends when the session's channel dies, because `collect` then
+/// fails every time — bounded by `MAX_CONSECUTIVE_FAILURES` so a flapping
+/// link does not spin forever.
+fn spawn_metric_sampler(
+    collector: monitor::HostMetricsCollector,
+    handle: std::sync::Arc<russh::client::Handle<ssh::ClientHandler>>,
+) -> tokio::task::JoinHandle<()> {
+    const INTERVAL: Duration = Duration::from_secs(2);
+    const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+    tokio::spawn(async move {
+        let mut failures = 0u32;
+        loop {
+            match collector.collect(&handle).await {
+                Ok(()) => failures = 0,
+                Err(_) => {
+                    failures += 1;
+                    if failures >= MAX_CONSECUTIVE_FAILURES {
+                        return;
+                    }
+                }
+            }
+            tokio::time::sleep(INTERVAL).await;
+        }
+    })
 }
 
 /// Reconnect a session at the given index, replacing its runtime and output channel.
@@ -2934,6 +3838,24 @@ async fn replay_recording(path: &std::path::Path) -> anyhow::Result<()> {
 /// Convert a crossterm KeyEvent into bytes to send to the remote shell
 fn key_to_bytes(key: crossterm::event::KeyEvent) -> Vec<u8> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    // Alt is transmitted as an ESC prefix — the convention every readline,
+    // vim and emacs on the far end expects. Without this, Alt+f (forward-word)
+    // and Alt+d (kill-word) reach the remote as a bare `f` and `d`, which is
+    // how v1 broke word motion for anyone who uses it.
+    if has_meta_modifier(key.modifiers) {
+        let mut stripped = key;
+        stripped.modifiers.remove(KeyModifiers::ALT);
+        stripped.modifiers.remove(KeyModifiers::META);
+        let inner = key_to_bytes(stripped);
+        if inner.is_empty() {
+            return inner;
+        }
+        let mut out = vec![0x1b];
+        out.extend_from_slice(&inner);
+        return out;
+    }
+
     match key.code {
         KeyCode::Char(c) => {
             if ctrl {
@@ -3332,18 +4254,22 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                 let jump_host = config_entry
                     .and_then(|e| e.jump_host.clone())
                     .filter(|j| !j.is_empty());
-                // Merge tags from config if cache tags are empty
+                // Merge tags from config if cache tags are empty. Keep the
+                // structured pairs: chip layout and peer-set membership both
+                // need key and value separately, not a pre-joined string.
+                let tag_pairs: Vec<(String, String)> = if h.tags.is_empty() {
+                    config_entry
+                        .map(|e| crate::format::sorted_tags(&e.tags))
+                        .unwrap_or_default()
+                } else {
+                    crate::format::sorted_tags(&h.tags)
+                };
                 let display_tags = if tags.is_empty() {
-                    if let Some(entry) = config_entry {
-                        entry
-                            .tags
-                            .iter()
-                            .map(|(k, v)| format!("{}={}", k, v))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    } else {
-                        String::new()
-                    }
+                    tag_pairs
+                        .iter()
+                        .map(|(k, v)| format!("{}={}", k, v))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 } else {
                     tags.join(", ")
                 };
@@ -3352,12 +4278,14 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                     hostname: h.hostname,
                     port: h.port,
                     user,
-                    status: HostStatus::Unknown,
+                    status: HostStatus::NeverProbed,
                     last_seen: h.last_seen,
                     tags: display_tags,
+                    tag_pairs,
                     latency_ms: None,
                     latency_history: Vec::new(),
                     jump_host,
+                    diverge_count: None,
                 });
             }
         }
@@ -3378,12 +4306,14 @@ fn load_hosts_into_app(app: &mut App, config: &AppConfig) -> anyhow::Result<()> 
                 hostname: entry.hostname.clone(),
                 port: entry.port,
                 user: entry.user.clone().unwrap_or_default(),
-                status: HostStatus::Unknown,
+                status: HostStatus::NeverProbed,
                 last_seen: String::new(),
                 tags: tags.join(", "),
+                tag_pairs: crate::format::sorted_tags(&entry.tags),
                 latency_ms: None,
                 latency_history: Vec::new(),
                 jump_host: entry.jump_host.clone().filter(|j| !j.is_empty()),
+                diverge_count: None,
             });
         }
     }
@@ -3560,6 +4490,9 @@ async fn run_on_group(
     };
     let auth = resolve_key_auth_method(auth, prompt_key_passphrase)?;
 
+    // Resolved once: `config` is a borrow and cannot move into the tasks, and
+    // a Duration is Copy.
+    let connect_timeout = config.connect_timeout();
     let mut handles = Vec::new();
     for host in hosts {
         let user = user.clone();
@@ -3571,6 +4504,7 @@ async fn run_on_group(
                 port: host.port,
                 username: user,
                 auth,
+                timeout: connect_timeout,
             };
             let result: Result<(SshSession, String, Option<String>), _> =
                 SshClient::connect(&connect_config).await;
@@ -3886,6 +4820,80 @@ mod tests {
     }
 
     #[test]
+    fn alt_keys_reach_the_shell_as_an_esc_prefix() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        // Alt+f is readline forward-word. v1 swallowed it to open the file
+        // browser, so the remote never saw it at all.
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(key_to_bytes(alt_f), vec![0x1b, b'f']);
+
+        // Alt+d is kill-word; v1 used it to detach.
+        let alt_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT);
+        assert_eq!(key_to_bytes(alt_d), vec![0x1b, b'd']);
+
+        // Alt+. is yank-last-argument, the one people miss most.
+        let alt_dot = KeyEvent::new(KeyCode::Char('.'), KeyModifiers::ALT);
+        assert_eq!(key_to_bytes(alt_dot), vec![0x1b, b'.']);
+
+        // macOS reports Option as META; it must behave identically.
+        let meta_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::META);
+        assert_eq!(key_to_bytes(meta_b), vec![0x1b, b'b']);
+    }
+
+    #[test]
+    fn alt_arrows_keep_their_escape_sequence_under_the_prefix() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        // ESC + CSI D, which is what a terminal sends for Alt+Left.
+        let alt_left = KeyEvent::new(KeyCode::Left, KeyModifiers::ALT);
+        assert_eq!(key_to_bytes(alt_left), b"\x1b\x1b[D".to_vec());
+    }
+
+    #[test]
+    fn unmodified_keys_are_unchanged_by_the_alt_path() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let plain = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
+        assert_eq!(key_to_bytes(plain), vec![b'f']);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(key_to_bytes(ctrl_c), vec![0x03]);
+    }
+
+    #[test]
+    fn prefix_key_parses_the_configured_spec() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut config = AppConfig::default();
+        assert_eq!(config.session.prefix_key, "ctrl-a");
+
+        let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(is_prefix_key(&ctrl_a, &config));
+
+        // A bare `a` is not the prefix; it is a letter someone is typing.
+        let plain_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(!is_prefix_key(&plain_a, &config));
+
+        // And Ctrl+B is not the prefix either, unless configured so.
+        let ctrl_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        assert!(!is_prefix_key(&ctrl_b, &config));
+        config.session.prefix_key = "ctrl-b".to_string();
+        assert!(is_prefix_key(&ctrl_b, &config));
+        assert!(!is_prefix_key(&ctrl_a, &config));
+    }
+
+    #[test]
+    fn shell_focus_governs_whether_essh_claims_keys() {
+        let mut app = App::new(4);
+        // No sessions: the dashboard owns the keyboard.
+        app.view = AppView::Session;
+        assert!(
+            !shell_has_focus(&app),
+            "a Session view with no session is not a shell"
+        );
+
+        app.view = AppView::Dashboard;
+        assert!(!shell_has_focus(&app));
+    }
+
+    #[test]
     fn test_has_meta_modifier_recognizes_alt_and_meta() {
         assert!(has_meta_modifier(KeyModifiers::ALT));
         assert!(has_meta_modifier(KeyModifiers::META));
@@ -4176,5 +5184,692 @@ mod tests {
         assert!(!should_try_next_auth_candidate(&SshError::HostKey(
             "mismatch".to_string()
         )));
+    }
+}
+
+/// `essh config ssh` — what ESSH makes of the user's ssh_config.
+///
+/// The compatibility tier list from `sshconfig::support_for`, applied to the
+/// user's actual file. A claim of "OpenSSH compatibility" that cannot be
+/// inspected is a claim nobody can check.
+fn print_ssh_config_check(path: &std::path::Path) {
+    if !path.exists() {
+        println!("No ssh_config at {}", path.display());
+        return;
+    }
+    let cfg = sshconfig::SshConfig::load(path);
+
+    println!("Parsed {}", path.display());
+    for src in cfg.sources.iter().skip(1) {
+        println!("  include: {}", src.display());
+    }
+    if !cfg.broken_includes.is_empty() {
+        println!();
+        println!("Includes that could not be read:");
+        for (p, why) in &cfg.broken_includes {
+            println!("  {} — {}", p, why);
+        }
+    }
+
+    let aliases = cfg.aliases();
+    println!();
+    println!("{} host aliases", aliases.len());
+    for a in aliases.iter().take(40) {
+        println!("  {}", a);
+    }
+    if aliases.len() > 40 {
+        println!("  … and {} more", aliases.len() - 40);
+    }
+
+    let caveats = cfg.global_caveats();
+    println!();
+    if caveats.is_empty() {
+        println!("Every directive in this config is honoured natively.");
+        return;
+    }
+    println!("Directives ESSH does not honour natively:");
+    for (kw, support) in caveats {
+        let note = match support {
+            sshconfig::Support::ViaSystemSsh => "handled by delegating to the system ssh",
+            sshconfig::Support::Unsupported => "parsed, but not acted on",
+            sshconfig::Support::Full => unreachable!(),
+        };
+        println!("  {:<28} {}", kw, note);
+    }
+}
+
+/// `essh config resolve <host>` — the `ssh -G` equivalent.
+fn print_ssh_config_resolution(path: &std::path::Path, host: &str) {
+    if !path.exists() {
+        println!("No ssh_config at {}", path.display());
+        return;
+    }
+    let cfg = sshconfig::SshConfig::load(path);
+    let local_user = std::env::var("USER").unwrap_or_default();
+    let r = cfg.resolve(host, &local_user);
+
+    println!("alias            {}", r.alias);
+    println!("hostname         {}", r.hostname);
+    println!("port             {}", r.port);
+    println!(
+        "user             {}",
+        r.user.clone().unwrap_or_else(|| local_user.clone())
+    );
+    for f in &r.identity_files {
+        println!("identityfile     {}", f);
+    }
+    if r.identities_only {
+        println!("identitiesonly   yes");
+    }
+    if let Some(j) = &r.proxy_jump {
+        println!("proxyjump        {}", j);
+    }
+    if let Some(c) = &r.proxy_command {
+        // Expanded, because the unexpanded form is not what actually runs.
+        let ctx = sshconfig::tokens::TokenContext {
+            hostname: r.hostname.clone(),
+            original_host: r.alias.clone(),
+            port: r.port,
+            remote_user: r.user.clone().unwrap_or_else(|| local_user.clone()),
+            local_user: local_user.clone(),
+            home: dirs::home_dir().unwrap_or_default().display().to_string(),
+            local_hostname: hostname_local(),
+        };
+        println!("proxycommand     {}", sshconfig::expand_tokens(c, &ctx));
+    }
+    for f in &r.local_forwards {
+        println!("localforward     {}", f);
+    }
+    for f in &r.remote_forwards {
+        println!("remoteforward    {}", f);
+    }
+    for f in &r.dynamic_forwards {
+        println!("dynamicforward   {}", f);
+    }
+    if let Some(i) = r.server_alive_interval {
+        println!("serveraliveinterval {}", i);
+    }
+
+    if let Some(summary) = r.caveat_summary() {
+        println!();
+        println!("note: {}", summary);
+    }
+    let unsupported: Vec<&(String, String, sshconfig::Support)> = r
+        .caveats
+        .iter()
+        .filter(|(_, _, s)| *s == sshconfig::Support::Unsupported)
+        .collect();
+    if !unsupported.is_empty() {
+        println!();
+        println!("parsed but not acted on:");
+        for (k, v, _) in unsupported {
+            println!("  {} {}", k, v);
+        }
+    }
+}
+
+fn hostname_local() -> String {
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Build a diagnosis target from ssh_config, so `essh why` probes the same
+/// place a connect would actually go — including through a bastion.
+fn build_diagnose_target(target: &str, port_override: Option<u16>) -> diagnose::Target {
+    let (alias, user_port) = match target.rsplit_once(':') {
+        Some((h, p)) if p.parse::<u16>().is_ok() => (h.to_string(), p.parse::<u16>().ok()),
+        _ => (target.to_string(), None),
+    };
+    // Strip any user@ prefix; it plays no part in reachability.
+    let alias = alias.rsplit('@').next().unwrap_or(&alias).to_string();
+
+    let cfg_path = sshconfig::default_path();
+    let local_user = std::env::var("USER").unwrap_or_default();
+
+    let resolved = if cfg_path.exists() {
+        Some(sshconfig::SshConfig::load(&cfg_path).resolve(&alias, &local_user))
+    } else {
+        None
+    };
+
+    let (hostname, cfg_port, proxy_jump, proxy_command) = match &resolved {
+        Some(r) => (
+            r.hostname.clone(),
+            r.port,
+            r.proxy_jump.clone(),
+            r.proxy_command.clone(),
+        ),
+        None => (alias.clone(), 22, None, None),
+    };
+
+    // ProxyJump can be `user@host:port` and can chain; the first hop is the
+    // one we can probe from here.
+    //
+    // The value is usually *another alias* in the same config, not a
+    // hostname — `ProxyJump bastion` where `Host bastion` sets HostName and
+    // Port. Probing the literal string produces a DNS failure for a host that
+    // was never meant to be resolved, which is precisely the unreadable
+    // ProxyJump diagnostic this ladder exists to replace.
+    let bastion = proxy_jump.and_then(|j| {
+        let first = j.split(',').next().unwrap_or(&j).trim().to_string();
+        if first.eq_ignore_ascii_case("none") || first.is_empty() {
+            return None;
+        }
+        let hostpart = first.rsplit('@').next().unwrap_or(&first).to_string();
+        let (name, explicit_port) = match hostpart.rsplit_once(':') {
+            Some((h, p)) if p.parse::<u16>().is_ok() => (h.to_string(), p.parse::<u16>().ok()),
+            _ => (hostpart, None),
+        };
+
+        // Resolve the hop through the config as well, so aliases work.
+        match &resolved {
+            Some(_) if cfg_path.exists() => {
+                let hop = sshconfig::SshConfig::load(&cfg_path).resolve(&name, &local_user);
+                Some(diagnose::Bastion {
+                    alias: name,
+                    hostname: hop.hostname,
+                    port: explicit_port.unwrap_or(hop.port),
+                })
+            }
+            _ => Some(diagnose::Bastion {
+                hostname: name.clone(),
+                alias: name,
+                port: explicit_port.unwrap_or(22),
+            }),
+        }
+    });
+
+    diagnose::Target {
+        alias,
+        hostname,
+        port: port_override.or(user_port).unwrap_or(cfg_port),
+        bastion,
+        proxy_command,
+    }
+}
+
+/// Launcher key handling.
+///
+/// Typing filters, ↑/↓ select, Enter connects, Esc drops to the dashboard.
+/// Everything printable goes into the query — the launcher is a search box
+/// first, so single-letter commands would fight the thing it exists to do.
+/// Records the intent to connect rather than doing it: the event loop makes
+/// the connection after the next draw, so the user sees which host is being
+/// dialled instead of a frozen screen.
+fn handle_launcher_key(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    tui_state: &mut TuiState,
+) -> anyhow::Result<KeyAction> {
+    match key.code {
+        KeyCode::Esc => {
+            app.view = AppView::Dashboard;
+        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Ok(KeyAction::Quit);
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+D on an empty query quits, like a shell.
+            if app.launcher.query.is_empty() {
+                return Ok(KeyAction::Quit);
+            }
+        }
+        KeyCode::Up => app.launcher.prev(),
+        KeyCode::Down => app.launcher.next(),
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => app.launcher.prev(),
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => app.launcher.next(),
+        KeyCode::Backspace => {
+            app.launcher.query.pop();
+            refresh_launcher(app);
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.launcher.query.clear();
+            refresh_launcher(app);
+        }
+        KeyCode::Enter => {
+            if let Some(m) = app.launcher.selected_match().cloned() {
+                let host = host_display_for_candidate(&m.candidate);
+                // Make sure the host list contains it, so the session and the
+                // dashboard agree about what this host is called.
+                if !app
+                    .hosts
+                    .iter()
+                    .any(|h| h.hostname == host.hostname && h.port == host.port)
+                {
+                    let mut hosts = app.hosts.clone();
+                    hosts.push(host.clone());
+                    app.set_hosts(hosts);
+                }
+                select_host(app, &host.hostname, host.port);
+                app.set_status(format!(
+                    "Connecting to {}@{}:{}…",
+                    host.user, host.hostname, host.port
+                ));
+                // Deferred so the status above is on screen before the
+                // connect blocks the loop.
+                tui_state.pending_connect = Some(host);
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.launcher.query.push(c);
+            refresh_launcher(app);
+        }
+        _ => {}
+    }
+    Ok(KeyAction::Handled)
+}
+
+/// Re-rank the launcher against the current query.
+fn refresh_launcher(app: &mut App) {
+    app.launcher.results = launcher::search(&app.candidates, &app.launcher.query);
+    app.launcher.clamp();
+}
+
+fn host_display_for_candidate(c: &launcher::Candidate) -> HostDisplay {
+    HostDisplay {
+        name: c.alias.clone(),
+        hostname: c.hostname.clone(),
+        port: c.port,
+        user: c.user.clone().unwrap_or_default(),
+        status: HostStatus::NeverProbed,
+        last_seen: String::new(),
+        tags: c
+            .tags
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join(", "),
+        tag_pairs: c.tags.clone(),
+        latency_ms: None,
+        latency_history: Vec::new(),
+        jump_host: None,
+        diverge_count: None,
+    }
+}
+
+/// Assemble launcher candidates from ssh_config, ESSH's config and the cache.
+fn load_launcher_candidates(app: &mut App, config: &AppConfig) {
+    let cfg_path = sshconfig::default_path();
+    let ssh_cfg = if cfg_path.exists() {
+        Some(sshconfig::SshConfig::load(&cfg_path))
+    } else {
+        None
+    };
+    let local_user = std::env::var("USER").unwrap_or_default();
+    let cached = CacheDb::open_default()
+        .and_then(|db| db.list_hosts())
+        .unwrap_or_default();
+
+    app.candidates = launcher::collect_candidates(
+        ssh_cfg.as_ref(),
+        &config.hosts,
+        &cached,
+        &local_user,
+        chrono::Utc::now(),
+    );
+
+    app.launcher.empty_reason = if app.candidates.is_empty() {
+        Some(format!(
+            "Nothing in {}, in ESSH's config, or in the cache. \
+             Add a Host block to your ssh_config and it will appear here.",
+            cfg_path.display()
+        ))
+    } else {
+        None
+    };
+    refresh_launcher(app);
+}
+/// Restore one workspace session.
+///
+/// The host is probed before connecting. That is not an optimisation: an
+/// unreachable host would otherwise block until its TCP timeout, and because
+/// this runs inside the event loop that stalls the entire UI — nothing
+/// renders and no key is read. Probing first bounds the cost and produces a
+/// better failure message than a timeout does.
+async fn restore_one_session(
+    app: &mut App,
+    config: &AppConfig,
+    audit: &AuditLogger,
+    session: &workspace::WorkspaceSession,
+    runtimes: &mut Vec<Option<SessionRuntime>>,
+    output_rxs: &mut Vec<Option<tokio::sync::mpsc::Receiver<Vec<u8>>>>,
+) -> workspace::SessionOutcome {
+    // Resolve the alias the same way a manual connect would, so a workspace
+    // entry means exactly what it means everywhere else.
+    let candidate = app
+        .candidates
+        .iter()
+        .find(|c| c.alias == session.host)
+        .cloned();
+
+    let mut host = match candidate {
+        Some(c) => host_display_for_candidate(&c),
+        None => HostDisplay {
+            name: session.host.clone(),
+            hostname: session.host.clone(),
+            port: 22,
+            user: String::new(),
+            status: HostStatus::NeverProbed,
+            last_seen: String::new(),
+            tags: String::new(),
+            tag_pairs: Vec::new(),
+            latency_ms: None,
+            latency_history: Vec::new(),
+            jump_host: None,
+            diverge_count: None,
+        },
+    };
+    if let Some(u) = &session.user {
+        host.user = u.clone();
+    }
+    if let Some(p) = session.port {
+        host.port = p;
+    }
+
+    // Cheap reachability check first, against the host we actually resolved.
+    //
+    // Re-deriving the target from the alias would consult ssh_config alone
+    // and fall back to treating the alias as a hostname — so a host defined
+    // only in ESSH's own config would "fail DNS" for a name that was never
+    // meant to be resolved.
+    let mut target = build_diagnose_target(&session.host, Some(host.port));
+    target.hostname = host.hostname.clone();
+    let d = diagnose::diagnose(&target, std::time::Duration::from_secs(3)).await;
+    if !d.succeeded() {
+        return workspace::SessionOutcome::Failed(d.headline());
+    }
+
+    match open_session(app, config, audit, &host, runtimes, output_rxs).await {
+        Ok(()) => {
+            // `open_session` reports connection failures by setting a status
+            // message and still returning `Ok`, so the Result alone would
+            // record a dead session as connected. Check the session's actual
+            // state instead.
+            if let Some(idx) = app.session_manager.active_index {
+                if let Some(SessionState::Disconnected { reason }) =
+                    app.session_manager.sessions.get(idx).map(|s| s.state.clone())
+                {
+                    return workspace::SessionOutcome::Failed(reason);
+                }
+            }
+
+            // The on-connect command is what makes restore restore *work*
+            // rather than a fresh shell sitting in $HOME.
+            if let Some(cmd) = &session.on_connect {
+                if let Some(idx) = app.session_manager.active_index {
+                    if let Some(Some(rt)) = runtimes.get(idx) {
+                        let mut bytes = cmd.clone().into_bytes();
+                        bytes.push(b'\r');
+                        rt.channel_tx.send(SessionInput::Data(bytes)).await.ok();
+                    }
+                }
+            }
+            workspace::SessionOutcome::Connected
+        }
+        Err(e) => {
+            // Reachable, but the session failed, so the fault is above the
+            // transport — authentication, most likely.
+            let raw = e.to_string();
+            workspace::SessionOutcome::Failed(
+                diagnose::classify_auth_failure(&raw, true).explain(),
+            )
+        }
+    }
+}
+
+/// Split the focused pane, duplicating the current session's host.
+///
+/// §3 shows four different hosts on screen, so a split needs a session to put
+/// in the new pane. Opening a second session to the same host is the
+/// predictable default — it is what `tmux split-window` does — and the user
+/// can switch that pane to another host afterwards.
+fn split_current_pane(app: &mut App, direction: panes::SplitDirection) {
+    let Some(active) = app.session_manager.active_index else {
+        return;
+    };
+    // Seed the tree on first use, so a single session costs nothing.
+    if app.panes.is_none() {
+        app.panes = Some(panes::PaneTree::new(active));
+    }
+    // Only sessions not already on screen can fill a new pane.
+    let shown: Vec<usize> = app.panes.as_ref().map(|t| t.sessions()).unwrap_or_default();
+    let candidate = (0..app.session_manager.sessions.len()).find(|i| !shown.contains(i));
+
+    match candidate {
+        Some(next) => {
+            if let Some(tree) = app.panes.as_mut() {
+                tree.split(direction, next);
+            }
+            app.session_manager.switch_to(next);
+        }
+        None => {
+            // Nothing to put in the new pane. Say so rather than splitting
+            // into an empty region.
+            app.set_status(
+                "no other session to split into — open one first, then split".to_string(),
+            );
+        }
+    }
+}
+
+/// Raise the HUD if this session's host differs from its peers.
+///
+/// Silence stays the correct output for a host at consensus — a HUD that
+/// fires for agreement is just a status bar that forgot to be permanent.
+fn announce_divergence(app: &mut App, session_idx: usize) {
+    let Some(session) = app.session_manager.sessions.get(session_idx) else {
+        return;
+    };
+    let (hostname, port) = (session.hostname.clone(), session.port);
+    let Some(name) = app.host_name_for(&hostname, port) else {
+        return;
+    };
+    let Some(text) = app.divergence_headline(&name) else {
+        return;
+    };
+    let vitals = app
+        .session_diagnostics
+        .get(session_idx)
+        .and_then(|d| d.as_ref())
+        .map(|d| tui::hud::Vitals {
+            rtt_ms: d.rtt_ms,
+            down_bps: Some(d.throughput_down_bps),
+            loss_pct: Some(d.packet_loss_pct),
+        })
+        .unwrap_or_default();
+    app.hud.on_change(tui::hud::Reason::Diverged(text), vitals);
+}
+
+#[cfg(test)]
+mod identity_file_auth_tests {
+    use super::*;
+
+    /// `IdentityFile` must be offered, and in ssh's own order: an explicit
+    /// per-host key first, then IdentityFile, then the generic sweep.
+    #[test]
+    fn identity_files_are_offered_after_the_host_key_and_before_the_sweep() {
+        let dir = std::env::temp_dir().join("essh-idfile-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let host_key = dir.join("host_key");
+        let identity = dir.join("identity");
+        let standard = dir.join("id_ed25519");
+        for p in [&host_key, &identity, &standard] {
+            std::fs::write(p, b"x").unwrap();
+        }
+
+        let methods = auth_candidates_from_paths_with_identities(
+            Some(host_key.to_str().unwrap()),
+            None,
+            &[identity.clone()],
+            &[],
+            &[standard.clone()],
+            false,
+        );
+
+        let paths: Vec<PathBuf> = methods
+            .iter()
+            .filter_map(|m| match m {
+                AuthMethod::KeyFile { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(paths, vec![host_key, identity, standard]);
+    }
+
+    /// The regression this guards: a host with only an `IdentityFile` offered
+    /// no key at all, so ESSH fell through to a password prompt for a host
+    /// that authenticates fine by key.
+    #[test]
+    fn a_host_with_only_an_identity_file_still_offers_a_key() {
+        let dir = std::env::temp_dir().join("essh-idfile-only");
+        std::fs::create_dir_all(&dir).unwrap();
+        let identity = dir.join("only_key");
+        std::fs::write(&identity, b"x").unwrap();
+
+        let methods = auth_candidates_from_paths_with_identities(
+            None,
+            None,
+            &[identity.clone()],
+            &[],
+            &[],
+            false,
+        );
+        assert!(
+            matches!(methods.first(), Some(AuthMethod::KeyFile { path, .. }) if *path == identity),
+            "IdentityFile was not offered: {methods:?}"
+        );
+    }
+
+    /// A missing IdentityFile must not become a candidate — offering a key
+    /// that is not there wastes an auth round trip and muddies the error.
+    #[test]
+    fn a_missing_identity_file_is_skipped() {
+        let methods = auth_candidates_from_paths_with_identities(
+            None,
+            None,
+            &[PathBuf::from("/nonexistent/nope")],
+            &[],
+            &[],
+            false,
+        );
+        assert!(methods.is_empty(), "{methods:?}");
+    }
+}
+
+/// The command a function key stands for, if any.
+///
+/// Deliberately a short list. Every key claimed here is one a remote
+/// full-screen application can no longer receive, so the set stops at the
+/// commands people reach for repeatedly.
+fn function_key_command(key: &crossterm::event::KeyEvent) -> Option<KeyCode> {
+    if !key.modifiers.is_empty() {
+        return None;
+    }
+    Some(match key.code {
+        KeyCode::F(1) => KeyCode::Char('?'), // help
+        KeyCode::F(2) => KeyCode::Char('m'), // host monitor
+        KeyCode::F(3) => KeyCode::Char('f'), // file browser
+        KeyCode::F(4) => KeyCode::Char('p'), // port forwards
+        KeyCode::F(5) => KeyCode::Char('M'), // terminal + monitor ("mini")
+        KeyCode::F(6) => KeyCode::Char('d'), // detach to dashboard
+        KeyCode::F(7) => KeyCode::Left,      // previous session
+        KeyCode::F(8) => KeyCode::Right,     // next session
+        KeyCode::F(9) => KeyCode::Char('n'),  // new session
+        KeyCode::F(10) => KeyCode::Char('\u{1}'), // command palette (sentinel)
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod function_key_tests {
+    use super::*;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+
+    fn k(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn the_function_keys_map_to_the_commands_the_hints_advertise() {
+        assert_eq!(function_key_command(&k(KeyCode::F(1))), Some(KeyCode::Char('?')));
+        assert_eq!(function_key_command(&k(KeyCode::F(2))), Some(KeyCode::Char('m')));
+        assert_eq!(function_key_command(&k(KeyCode::F(3))), Some(KeyCode::Char('f')));
+        assert_eq!(function_key_command(&k(KeyCode::F(4))), Some(KeyCode::Char('p')));
+        // F5 is the terminal+monitor split, not the session split: the mini
+        // monitor is the one people want next to a shell.
+        assert_eq!(function_key_command(&k(KeyCode::F(5))), Some(KeyCode::Char('M')));
+        assert_eq!(function_key_command(&k(KeyCode::F(6))), Some(KeyCode::Char('d')));
+        // Session movement, so switching needs no prefix either.
+        assert_eq!(function_key_command(&k(KeyCode::F(7))), Some(KeyCode::Left));
+        assert_eq!(function_key_command(&k(KeyCode::F(8))), Some(KeyCode::Right));
+        assert_eq!(function_key_command(&k(KeyCode::F(9))), Some(KeyCode::Char('n')));
+        // F10 is the command palette; the sentinel is handled before the
+        // char dispatch, so it never reaches a command handler.
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(10))),
+            Some(KeyCode::Char('\u{1}'))
+        );
+    }
+
+    /// Unclaimed function keys must reach the remote application.
+    #[test]
+    fn function_keys_we_do_not_claim_are_left_alone() {
+        for n in [11u8, 12] {
+            assert_eq!(function_key_command(&k(KeyCode::F(n))), None, "F{n}");
+        }
+    }
+
+    /// A modified function key belongs to the shell, not to us.
+    #[test]
+    fn modified_function_keys_are_not_commands() {
+        let shifted = KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT);
+        assert_eq!(function_key_command(&shifted), None);
+        let ctrl = KeyEvent::new(KeyCode::F(2), KeyModifiers::CONTROL);
+        assert_eq!(function_key_command(&ctrl), None);
+    }
+
+    /// The keys a shell needs must never become commands. Claiming Ctrl+D
+    /// would cost EOF; Ctrl+M is literally Enter.
+    #[test]
+    fn no_control_key_is_ever_claimed_as_a_command() {
+        for c in ['d', 'm', 'c', 'w', 'p', 'a', 'z'] {
+            let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+            assert_eq!(function_key_command(&ev), None, "Ctrl+{c}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod connect_failure_tests {
+    use super::*;
+
+    /// An auth failure must not blame the password alone.
+    ///
+    /// When the key and the password are both refused for the same account,
+    /// the account name is the likelier cause — which is exactly the case
+    /// that reads as "it says my password is wrong, but it isn't".
+    #[test]
+    fn an_auth_failure_names_the_user_as_a_suspect() {
+        let msg = explain_connect_failure(
+            "mattbot",
+            "192.168.0.54",
+            "Authentication error: password rejected",
+        );
+        assert!(msg.contains("mattbot@192.168.0.54"), "{msg}");
+        assert!(msg.contains("username"), "the username is never mentioned: {msg}");
+    }
+
+    /// A non-auth failure should say what actually happened rather than
+    /// second-guessing the credentials.
+    #[test]
+    fn a_network_failure_is_not_reported_as_a_credential_problem() {
+        let msg = explain_connect_failure("matt", "10.0.0.9", "Connection refused");
+        assert!(msg.contains("Connection refused"), "{msg}");
+        assert!(!msg.contains("username"), "{msg}");
     }
 }

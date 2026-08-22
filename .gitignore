@@ -1,2 +1,10 @@
 /target
 .DS_Store
+
+# The wgpu renderer spike (N1). Kept locally as a record of the experiment;
+# not shipped — the TUI is the product and its 7MB of captures are not.
+/renderer
+
+# One-off capture artifacts.
+/demo-divergence.gif
+/demo-divergence.tape

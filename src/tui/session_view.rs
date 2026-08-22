@@ -2,7 +2,6 @@ use crate::diagnostics::DiagnosticsSnapshot;
 use crate::portfwd::PortForwardManager;
 use crate::session::{Session, SessionState};
 use crate::theme::Theme;
-use crate::tui::meta_key_hint;
 use crate::tui::widgets;
 use crate::tui::Notification;
 use ratatui::{
@@ -185,31 +184,43 @@ pub fn render_status_bar(
     theme: &Theme,
 ) {
     let mut spans = if let Some(d) = diag {
-        let rtt_text = match d.rtt_ms {
-            Some(rtt) => format!("{:.1}ms", rtt),
-            None => "—".to_string(),
-        };
-        let quality_str = format!("{:?}", d.quality);
-        let q_color = widgets::quality_color(theme, &quality_str);
-
-        vec![
-            Span::styled("RTT:", Style::default().fg(theme.text_muted)),
-            Span::raw(rtt_text),
-            Span::raw("  "),
-            Span::styled("↑", Style::default().fg(theme.rx_rate)),
-            Span::raw(widgets::format_bytes_rate(d.throughput_up_bps)),
-            Span::raw("  "),
-            Span::styled("↓", Style::default().fg(theme.tx_rate)),
-            Span::raw(widgets::format_bytes_rate(d.throughput_down_bps)),
-            Span::raw("  "),
-            Span::styled("Loss:", Style::default().fg(theme.text_muted)),
-            Span::raw(format!("{:.1}%", d.packet_loss_pct)),
-            Span::raw("  "),
-            Span::styled(format!("●{}", quality_str), Style::default().fg(q_color)),
-            Span::raw("  "),
-            Span::styled("Up:", Style::default().fg(theme.text_muted)),
-            Span::raw(widgets::format_duration_short(d.uptime_secs)),
-        ]
+        // A quality verdict with no round-trip behind it is a claim we cannot
+        // support. v1 showed `RTT:—` beside `●Excellent`: a dash where a number
+        // belongs, next to a confident assessment derived from nothing. Until
+        // a keepalive has come back, say so and withhold the verdict.
+        match d.rtt_ms {
+            Some(rtt) => {
+                let quality_str = format!("{:?}", d.quality);
+                let q_color = widgets::quality_color(theme, &quality_str);
+                vec![
+                    Span::styled("RTT:", Style::default().fg(theme.text_muted)),
+                    Span::raw(format!("{:.1}ms", rtt)),
+                    Span::raw("  "),
+                    Span::styled("↑", Style::default().fg(theme.rx_rate)),
+                    Span::raw(widgets::format_bytes_rate(d.throughput_up_bps)),
+                    Span::raw("  "),
+                    Span::styled("↓", Style::default().fg(theme.tx_rate)),
+                    Span::raw(widgets::format_bytes_rate(d.throughput_down_bps)),
+                    Span::raw("  "),
+                    Span::styled("Loss:", Style::default().fg(theme.text_muted)),
+                    Span::raw(format!("{:.1}%", d.packet_loss_pct)),
+                    Span::raw("  "),
+                    Span::styled(format!("●{}", quality_str), Style::default().fg(q_color)),
+                    Span::raw("  "),
+                    Span::styled("Up:", Style::default().fg(theme.text_muted)),
+                    Span::raw(widgets::format_duration_short(d.uptime_secs)),
+                ]
+            }
+            None => vec![
+                Span::styled(
+                    "link quality unmeasured — waiting for the first keepalive",
+                    Style::default().fg(theme.text_muted).italic(),
+                ),
+                Span::raw("  "),
+                Span::styled("Up:", Style::default().fg(theme.text_muted)),
+                Span::raw(widgets::format_duration_short(d.uptime_secs)),
+            ],
+        }
     } else {
         vec![Span::styled(
             match &session.state {
@@ -254,39 +265,179 @@ pub fn render_status_bar(
     f.render_widget(status, area);
 }
 
-/// Render the session footer with keybindings
-pub fn render_footer(f: &mut Frame, area: Rect, theme: &Theme) {
-    let switch_hint = meta_key_hint("←→");
-    let split_hint = meta_key_hint("s");
-    let monitor_hint = meta_key_hint("m");
-    let files_hint = meta_key_hint("f");
-    let detach_hint = meta_key_hint("d");
-    let close_hint = meta_key_hint("w");
-    let theme_hint = meta_key_hint("t");
-    let help_hint = meta_key_hint("h");
+/// The session's key hints.
+///
+/// Present at all times rather than on demand. The handoff reserved no rows
+/// for this, on the theory that the shell should own every cell — but a
+/// modal prefix nobody can see is a modal prefix nobody uses, and "I cannot
+/// memorise the keys" is the predictable result. Two rows is the price of
+/// the app being usable without the manual.
+pub fn render_footer(
+    f: &mut Frame,
+    area: Rect,
+    prefix: &str,
+    pending: bool,
+    status: Option<&str>,
+    sessions: usize,
+    theme: &Theme,
+) {
+    use crate::design as d;
+    use crate::tui::prefix_hint;
 
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(switch_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Switch  "),
-        Span::styled(split_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Split  "),
-        Span::styled(monitor_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Monitor  "),
-        Span::styled(files_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Files  "),
-        Span::styled(detach_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Detach  "),
-        Span::styled(close_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Close  "),
-        Span::styled(theme_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Theme  "),
-        Span::styled(help_hint, Style::default().fg(theme.key_hint)),
-        Span::raw(":Help"),
-    ]))
-    .block(
+    // A message takes the row while it is fresh. Commands that decline to do
+    // something — "no other session to split into" — used to say so into a
+    // status nothing rendered, so the key looked broken rather than refused.
+    if let Some(msg) = status.filter(|_| !pending) {
+        let footer = Paragraph::new(Line::from(vec![
+            Span::styled(" ▲ ", Style::default().fg(theme.status_warn).bold()),
+            Span::styled(msg.to_string(), Style::default().fg(theme.text_primary)),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(theme.status_warn)),
+        );
+        f.render_widget(footer, area);
+        return;
+    }
+
+    // While the prefix is pending the strip becomes the menu for it.
+    if pending {
+        let mut spans = vec![Span::styled(
+            format!(" {} ", prefix_hint(prefix, "—")),
+            Style::default().fg(theme.brand).bold(),
+        )];
+        for (key, label) in [
+            ("n", "new session"),
+            ("k", "menu"),
+            ("m", "monitor"),
+            ("f", "files"),
+            ("p", "forwards"),
+            ("s", "split"),
+            ("d", "detach"),
+            ("w", "close"),
+            ("1-9", "session"),
+            ("←→", "switch"),
+            ("⇥", "last"),
+            ("t", "theme"),
+            ("?", "help"),
+        ] {
+            spans.push(Span::styled(
+                key.to_string(),
+                Style::default().fg(theme.key_hint).bold(),
+            ));
+            spans.push(Span::styled(
+                format!(" {}  ", label),
+                Style::default().fg(theme.text_primary),
+            ));
+        }
+        spans.push(Span::styled(
+            "(again sends it to the shell)",
+            Style::default().fg(theme.text_muted).italic(),
+        ));
+        let footer = Paragraph::new(Line::from(spans)).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(theme.brand)),
+        );
+        f.render_widget(footer, area);
+        return;
+    }
+
+    // Idle: one key per thing, and only the things that apply right now.
+    //
+    // Two mechanisms — function keys for some commands, a prefix for others —
+    // means remembering which is which. Everything common has its own key, so
+    // the rule is just "press what the strip says". The prefix is still there
+    // for the rest, named at the end.
+    let mut keys: Vec<(&str, &str)> = vec![
+        ("F1", "help"),
+        ("F2", "monitor"),
+        ("F3", "files"),
+        ("F4", "forwards"),
+        ("F5", "mini"),
+        ("F9", "new"),
+        ("F10", "menu"),
+    ];
+    // Switching only means something once there is somewhere to switch to.
+    if sessions > 1 {
+        keys.push(("F7/F8", "prev/next"));
+    }
+    keys.push(("F6", "detach"));
+
+    let tail = format!("· {} for more", prefix_hint(prefix, ""));
+
+    let width = area.width as usize;
+    let keys_width: usize = keys
+        .iter()
+        .map(|(k, l)| k.chars().count() + l.chars().count() + 4)
+        .sum::<usize>()
+        + 1;
+
+    let mut spans = vec![Span::raw(" ")];
+    for (key, label) in &keys {
+        spans.push(Span::styled(
+            (*key).to_string(),
+            Style::default().fg(theme.key_hint).bold(),
+        ));
+        spans.push(Span::styled(
+            format!(" {}   ", label),
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    if keys_width + tail.chars().count() + 1 <= width {
+        spans.push(Span::styled(
+            tail.clone(),
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    let _ = d::FAINT;
+
+    let footer = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::TOP)
             .border_style(Style::default().fg(theme.border)),
     );
     f.render_widget(footer, area);
+}
+
+/// Render one session inside a split pane.
+///
+/// The design allows **no per-pane border titles** even in split — *"just a
+/// single hairline divider"*. So a pane is the terminal and nothing else;
+/// focus is shown by a one-column cyan bar on its left edge, which costs no
+/// row and no title.
+pub fn render_pane(f: &mut Frame, area: Rect, session: &Session, focused: bool, theme: &Theme) {
+    let _ = theme;
+    if area.width < 2 {
+        return;
+    }
+    // The divider/focus bar: one column, cyan when focused, rule otherwise.
+    let bar = Rect {
+        x: area.x,
+        y: area.y,
+        width: 1,
+        height: area.height,
+    };
+    let color = if focused {
+        crate::design::CYAN
+    } else {
+        crate::design::RULE
+    };
+    f.render_widget(
+        Paragraph::new(
+            (0..area.height)
+                .map(|_| Line::from(Span::styled("▏", Style::default().fg(color))))
+                .collect::<Vec<_>>(),
+        ),
+        bar,
+    );
+
+    let term = Rect {
+        x: area.x + 1,
+        y: area.y,
+        width: area.width - 1,
+        height: area.height,
+    };
+    render_terminal(f, term, session);
 }

@@ -52,6 +52,37 @@ pub enum Commands {
         session_id: String,
     },
 
+    /// Save, restore and list workspaces
+    ///
+    /// §4's `essh workspace production` shape is a subcommand, not a bare
+    /// argument, so a host genuinely named `workspace` stays reachable as
+    /// `essh connect workspace`.
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceAction,
+    },
+
+    /// Run the performance benchmarks
+    Bench,
+
+    /// Explain why a host will not connect
+    ///
+    /// Runs a probe ladder — config, bastion, DNS, TCP, SSH banner — and
+    /// stops at the first rung that fails. Rungs it never reached are shown
+    /// as unprobed rather than as passes.
+    Why {
+        /// Host alias or hostname
+        target: String,
+
+        /// Port (overrides ssh_config)
+        #[arg(short, long)]
+        port: Option<u16>,
+
+        /// Seconds to wait per probe
+        #[arg(short, long, default_value_t = 5)]
+        timeout: u64,
+    },
+
     /// Execute a command across a host group
     Run {
         /// Group name
@@ -174,6 +205,27 @@ pub enum ConfigAction {
 
     /// Initialize default config
     Init,
+
+    /// Parse ~/.ssh/config and report what ESSH will and will not honour
+    Ssh {
+        /// Config file (defaults to ~/.ssh/config)
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Show every ssh_config directive that applies to a host, like `ssh -G`
+    ///
+    /// Shaped deliberately like `ssh -G` so the two can be diffed: a user
+    /// should be able to see where ESSH and OpenSSH disagree before an
+    /// outage, not during one.
+    Resolve {
+        /// Host alias
+        host: String,
+
+        /// Config file (defaults to ~/.ssh/config)
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -183,5 +235,44 @@ pub enum AuditAction {
         /// Number of entries to show
         #[arg(short, long, default_value_t = 20)]
         lines: usize,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WorkspaceAction {
+    /// List saved workspaces
+    List,
+
+    /// Restore a workspace, connecting each session
+    Open {
+        /// Workspace name
+        name: String,
+    },
+
+    /// Save a set of hosts as a workspace
+    Save {
+        /// Workspace name
+        name: String,
+
+        /// Hosts to include
+        #[arg(required = true)]
+        hosts: Vec<String>,
+
+        /// Command to run on each host after connecting, e.g.
+        /// "tmux new -A -s essh" so restoring restores actual work
+        #[arg(long)]
+        on_connect: Option<String>,
+    },
+
+    /// Show what a workspace contains
+    Show {
+        /// Workspace name
+        name: String,
+    },
+
+    /// Delete a workspace
+    Remove {
+        /// Workspace name
+        name: String,
     },
 }

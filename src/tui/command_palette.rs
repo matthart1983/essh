@@ -1,9 +1,10 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Clear, Paragraph},
 };
 
 use crate::theme::Theme;
+use crate::design as d;
 use crate::tui::meta_key_hint;
 
 use super::{AppView, DashboardTab, HostDisplay, HostStatus};
@@ -68,10 +69,10 @@ impl CommandPalette {
             let status = match host.status {
                 HostStatus::Online => "●",
                 HostStatus::Offline => "○",
-                HostStatus::Unknown => "?",
+                HostStatus::NeverProbed => "?",
             };
             entries.push(PaletteEntry {
-                icon: "🖥",
+                icon: "›_",
                 label: format!(
                     "Connect: {}",
                     if host.name.is_empty() {
@@ -92,7 +93,7 @@ impl CommandPalette {
         // Active sessions — "switch to <label>"
         for (i, session) in sessions.iter().enumerate() {
             entries.push(PaletteEntry {
-                icon: "⚡",
+                icon: "›_",
                 label: format!("Session {}: {}", i + 1, session.label),
                 detail: format!(
                     "{}@{}:{} — {}",
@@ -105,28 +106,28 @@ impl CommandPalette {
 
         // Navigation commands
         entries.push(PaletteEntry {
-            icon: "📋",
+            icon: "◇",
             label: "Dashboard: Sessions".to_string(),
             detail: "View active sessions".to_string(),
             action: PaletteAction::SetDashboardTab(DashboardTab::Sessions),
             score: 0,
         });
         entries.push(PaletteEntry {
-            icon: "📋",
+            icon: "◇",
             label: "Dashboard: Hosts".to_string(),
             detail: "Browse and connect to hosts".to_string(),
             action: PaletteAction::SetDashboardTab(DashboardTab::Hosts),
             score: 0,
         });
         entries.push(PaletteEntry {
-            icon: "📋",
+            icon: "◇",
             label: "Dashboard: Fleet".to_string(),
             detail: "Fleet health overview".to_string(),
             action: PaletteAction::SetDashboardTab(DashboardTab::Fleet),
             score: 0,
         });
         entries.push(PaletteEntry {
-            icon: "📋",
+            icon: "◇",
             label: "Dashboard: Config".to_string(),
             detail: "Configuration overview".to_string(),
             action: PaletteAction::SetDashboardTab(DashboardTab::Config),
@@ -135,28 +136,28 @@ impl CommandPalette {
 
         if has_sessions {
             entries.push(PaletteEntry {
-                icon: "🔲",
+                icon: "▦",
                 label: "Toggle: Split Pane".to_string(),
                 detail: format!("Terminal + monitor side-by-side ({})", split_hint),
                 action: PaletteAction::ToggleSplitPane,
                 score: 0,
             });
             entries.push(PaletteEntry {
-                icon: "📊",
+                icon: "▦",
                 label: "View: Host Monitor".to_string(),
                 detail: format!("Full-screen host metrics ({})", monitor_hint),
                 action: PaletteAction::SetView(AppView::Monitor),
                 score: 0,
             });
             entries.push(PaletteEntry {
-                icon: "🔀",
+                icon: "⇄",
                 label: "View: Port Forwarding".to_string(),
                 detail: format!("Manage port forwards ({})", portfwd_hint),
                 action: PaletteAction::SetView(AppView::PortForwarding),
                 score: 0,
             });
             entries.push(PaletteEntry {
-                icon: "📁",
+                icon: "▤",
                 label: "View: File Browser".to_string(),
                 detail: format!("Upload/download files ({})", files_hint),
                 action: PaletteAction::SetView(AppView::FileBrowser),
@@ -165,7 +166,7 @@ impl CommandPalette {
         }
 
         entries.push(PaletteEntry {
-            icon: "❓",
+            icon: "?",
             label: "Help".to_string(),
             detail: "Show keyboard shortcuts (?)".to_string(),
             action: PaletteAction::ToggleHelp,
@@ -253,103 +254,118 @@ fn fuzzy_score(query: &str, label: &str, detail: &str) -> i32 {
 // Rendering — centered overlay popup
 // ---------------------------------------------------------------------------
 
+/// Screen 6 — the command palette.
+///
+/// A floating surface on a scrim, not a bordered box with a title on the
+/// rule: *"No box-drawing needed when you can composite."* A terminal cannot
+/// blur, but it can dim the backdrop and lift the card off it with its own
+/// background, which is the part that carries the effect.
 pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
+    let _ = theme;
     let area = frame.area();
 
-    let popup_width = 70u16.min(area.width.saturating_sub(4));
-    let max_visible = 12usize;
-    // 3 = border top + input line + border bottom, +1 per entry
-    let popup_height = (3 + max_visible.min(palette.entries.len().max(1)) as u16 + 1)
-        .min(area.height.saturating_sub(4));
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = area.height / 6; // bias towards top
-    let popup = Rect::new(x, y, popup_width, popup_height);
+    // ── the scrim: dim everything behind the card
+    frame.render_widget(
+        Block::default().style(Style::default().bg(d::BG).fg(d::FAINT)),
+        area,
+    );
 
-    frame.render_widget(Clear, popup);
+    let width = 66u16.min(area.width.saturating_sub(6));
+    let max_visible = 8usize;
+    let rows = max_visible.min(palette.entries.len().max(1)) as u16;
+    let height = (rows + 3).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    // The design floats the card slightly above centre.
+    let y = (area.height.saturating_sub(height)) * 46 / 100;
+    let card = Rect::new(x, y, width, height);
 
-    let block = Block::default()
-        .title(" Command Palette ")
-        .title_style(Style::default().fg(theme.brand).bold())
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.brand));
+    frame.render_widget(Clear, card);
+    // The card's own surface, a shade above the background so it reads as
+    // lifted rather than as a hole.
+    frame.render_widget(
+        Block::default().style(Style::default().bg(d::RULE).fg(d::FG)),
+        card,
+    );
 
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
+    let inner = Rect {
+        x: card.x + 2,
+        y: card.y + 1,
+        width: card.width.saturating_sub(4),
+        height: card.height.saturating_sub(2),
+    };
     if inner.height == 0 || inner.width == 0 {
         return;
     }
 
-    // Input line
-    let input_area = Rect::new(inner.x, inner.y, inner.width, 1);
-    let input_line = Line::from(vec![
-        Span::styled(" > ", Style::default().fg(theme.brand).bold()),
-        Span::styled(&palette.query, Style::default().fg(theme.text_primary)),
-        Span::styled("█", Style::default().fg(theme.brand)),
-    ]);
-    frame.render_widget(Paragraph::new(input_line), input_area);
+    // ── query line: `› host ▌`
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("› ", Style::default().fg(d::CYAN)),
+            Span::styled(
+                palette.query.clone(),
+                Style::default().fg(d::FG).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("▌", Style::default().fg(d::CYAN)),
+        ])),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
 
-    // Entry list
-    let list_top = inner.y + 1;
-    let list_height = inner.height.saturating_sub(1) as usize;
-    let visible_count = list_height.min(palette.entries.len());
+    if palette.entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new(d::none_line("nothing matches")),
+            Rect::new(inner.x, inner.y + 2, inner.width, 1),
+        );
+        return;
+    }
 
-    // Scroll so that `selected` is visible
-    let scroll_offset = if palette.selected >= list_height {
-        palette.selected - list_height + 1
-    } else {
-        0
-    };
+    let list_top = inner.y + 2;
+    let list_height = inner.height.saturating_sub(2) as usize;
+    let scroll = palette.selected.saturating_sub(list_height.saturating_sub(1));
 
-    for (vi, ei) in (scroll_offset..scroll_offset + visible_count).enumerate() {
-        if ei >= palette.entries.len() {
+    for (vi, ei) in (scroll..scroll + list_height.min(palette.entries.len())).enumerate() {
+        let Some(entry) = palette.entries.get(ei) else {
             break;
-        }
-        let entry = &palette.entries[ei];
+        };
         let row_y = list_top + vi as u16;
         if row_y >= inner.y + inner.height {
             break;
         }
-        let row_area = Rect::new(inner.x, row_y, inner.width, 1);
+        let row = Rect::new(inner.x, row_y, inner.width, 1);
+        let selected = ei == palette.selected;
 
-        let is_selected = ei == palette.selected;
-        let bg = if is_selected {
-            theme.highlight_bg
-        } else {
-            Color::Reset
-        };
-        let label_style = if is_selected {
-            Style::default().fg(theme.active_tab).bold().bg(bg)
-        } else {
-            Style::default().fg(theme.text_primary).bg(bg)
-        };
-        let detail_style = Style::default().fg(theme.text_secondary).bg(bg);
+        if selected {
+            frame.render_widget(
+                Block::default().style(Style::default().bg(d::ROW_SELECTED_BG)),
+                row,
+            );
+        }
 
-        // Truncate detail to fit
-        let icon_label = format!(" {} {}", entry.icon, entry.label);
-        let max_detail = (inner.width as usize).saturating_sub(icon_label.len() + 3);
-        let detail_truncated: String = if entry.detail.len() > max_detail {
-            format!("{}…", &entry.detail[..max_detail.saturating_sub(1)])
+        let label_style = if selected {
+            Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD)
         } else {
-            entry.detail.clone()
+            Style::default().fg(d::FG)
         };
 
-        let line = Line::from(vec![
-            Span::styled(icon_label, label_style),
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(detail_truncated, detail_style),
-        ]);
-        frame.render_widget(Paragraph::new(line), row_area);
-    }
+        // Results carry consequence — "3 facets differ", "10 · 2 reachable" —
+        // so a choice is made by outcome rather than by guessing the verb.
+        let left = format!("{} {}", entry.icon, entry.label);
+        let hint = entry.detail.clone();
+        let gap = (inner.width as usize)
+            .saturating_sub(left.chars().count() + hint.chars().count() + 1)
+            .max(1);
 
-    // If no results
-    if palette.entries.is_empty() {
-        let empty_area = Rect::new(inner.x, list_top, inner.width, 1);
-        let msg = Paragraph::new(Line::from(Span::styled(
-            "  No matches",
-            Style::default().fg(theme.text_muted),
-        )));
-        frame.render_widget(msg, empty_area);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!("{} ", entry.icon),
+                    Style::default().fg(if selected { d::CYAN } else { d::DIM }),
+                ),
+                Span::styled(entry.label.clone(), label_style),
+                Span::raw(" ".repeat(gap)),
+                Span::styled(hint, Style::default().fg(d::FAINT)),
+            ])),
+            row,
+        );
     }
 }
 

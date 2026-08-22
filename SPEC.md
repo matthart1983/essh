@@ -693,3 +693,443 @@ Wire up the existing `AuthMethod::Agent` variant to discover keys from the local
 3. ~~Should we support split-pane views (terminal + monitor side-by-side) in addition to the overlay toggle?~~ **Resolved:** Implemented in §13.5 — `Alt+s` toggles split-pane with adjustable width.
 4. Plugin system architecture — sandboxing vs. ecosystem reach tradeoff? *(deferred to M10)*
 5. ~~Should we support Windows or Linux/macOS only?~~ **Resolved:** ESSH currently supports local builds on macOS and Linux only.
+
+---
+
+# Addendum — collector correctness, honest empty states, divergence
+
+Added on branch `feat/n0-collector-divergence`. This supersedes the parts of
+the document above that describe the host monitor and the fleet view.
+
+## 1. The monitor was reporting zeros (fixed)
+
+§4.1 above promised macOS metrics via "`sysctl`/`vm_stat`". That was never
+implemented. `HostMetricsCollector` issued `cat /proc/stat`, `/proc/meminfo`,
+`/proc/loadavg`, `/proc/net/dev` and `/proc/uptime` at every host regardless of
+platform. On a Mac every section came back empty, every parser returned its
+`unwrap_or(0)` default, and the UI drew `CPU 0.0%`, `MEM 0 B / 0 B`,
+`LOAD 0.00 0.00 0.00` and flat sparklines — beside a terminal printing the real
+figures.
+
+Two things were wrong: no macOS collectors, and **no way to distinguish a zero
+reading from a missing one**.
+
+### Three-state metrics
+
+Every metric group is now `Pending`, `Collected`, `Uncollected { reason,
+attempts }` or `Unsupported { reason }`, and `Default` is `Pending`. A freshly
+constructed `HostMetrics` claims nothing even though every numeric field is 0.
+Accessors return `Option`, so a caller cannot read a number that was never
+collected without ignoring the type.
+
+The UI renders a group's reason in words, and draws no bar and no sparkline:
+
+```
+CPU   uncollected · neither `iostat` nor `top` returned a CPU sample 4×
+NET   waiting for first sample
+```
+
+Rates are `Pending` on the first sweep rather than `0 B/s`: there is no previous
+counter to difference against, so there is genuinely no reading yet.
+
+### macOS collectors
+
+`uname -s` is probed once per session and cached. Per platform:
+
+| Group | Linux | macOS |
+|---|---|---|
+| CPU | `/proc/stat` delta | `iostat -c 2 -w 1`, falling back to `top -l 2` |
+| Memory | `/proc/meminfo` | `vm_stat` + `hw.memsize` + `vm.swapusage` |
+| Load | `/proc/loadavg` | `sysctl -n vm.loadavg` |
+| Uptime | `/proc/uptime` | `kern.boottime` + remote `date +%s` |
+| Network | `/proc/net/dev` | `netstat -ib`, `<Link#N>` rows only |
+| Disk | `df -Pk` | `df -Pk` |
+| Processes | `ps aux --sort=-%cpu` | `ps axo … -r` |
+
+Notes on the traps, each of which has a regression test:
+
+- `df -P` alone leaves the block size implementation-defined and macOS answers
+  in 512-byte blocks. The old code multiplied by 1024 unconditionally, so every
+  macOS filesystem read at twice its real size. Pinned to `df -Pk`.
+- `iostat` prints a since-boot row first and the interval row second; taking the
+  wrong one is a permanent, silent overstatement.
+- `vm_stat` has both `Pages stored in compressor` and `Pages occupied by
+  compressor`. The first is larger and wrong for a footprint.
+- `netstat -ib` prints one row per interface *per address family*, all carrying
+  identical counters. Summing every row double-counts the machine.
+- macOS reports an aggregate CPU only; per-core would need a Mach call
+  unavailable over an exec channel. That is `Unsupported`, not zero.
+
+### Testing
+
+Golden fixtures captured from a running macOS host, plus two opt-in live tests
+that run the real command set:
+
+```sh
+cargo test --bin essh macos_command_set                # local shell
+ESSH_LIVE_SSH=host ESSH_LIVE_KEY=~/.ssh/id_ed25519 \
+  cargo test --bin essh live_ssh -- --ignored          # real SSH
+```
+
+The live test asserts non-zero, in-range values and fails if any group is
+uncollected. Its absence is why the original bug shipped: every prior test fed
+the parsers hand-written Linux strings.
+
+## 2. Display honesty
+
+- Timestamps are relative (`2d ago`), never
+  `2026-03-02T09:40:05.401277+00:00` in a list view.
+- Paths truncate from the **left** — the tail identifies. `region=us-east-1`
+  no longer becomes `region=us-ea`.
+- Tags render as chips, whole or not at all, with `+N` for the remainder.
+  Clipping mid-value produced `env=`, which reads as an empty value rather than
+  a hidden one.
+- Filesystems are filtered to user data: `/System/Volumes/*` except `Data`,
+  no App Translocation mounts, nothing under 1 GiB unless over 90% full,
+  ordered fullest first, with a count of what was hidden.
+- `HostStatus::Unknown` is now `NeverProbed` and renders as `never probed`.
+  `○ Unknown` read as a failed check rather than an absent one.
+- No dashes in laid-out columns. An unreachable host shows `no reply`; an
+  unprobed one shows `never probed`.
+
+## 3. Terminal fidelity
+
+v1 bound twelve `Alt` combinations. `Alt+f` and `Alt+b` are readline
+word-motion, `Alt+d` is kill-word, `Alt+.` is yank-last-argument — all
+swallowed, and `key_to_bytes` dropped Alt keys entirely rather than sending
+them on.
+
+Now: while a shell has focus ESSH claims exactly one key, a configurable
+prefix defaulting to `Ctrl+A`, and forwards everything else. Alt is transmitted
+as the ESC prefix the far end expects. Pressing the prefix twice sends the
+literal key. Outside a session there is no shell to steal from, so the direct
+`Alt` bindings remain.
+
+## 4. Divergence
+
+The headline feature: *how does this host differ from its peers?*
+
+Peer sets are derived from tags; a tag held by fewer than two hosts defines no
+comparison and is not a peer set. Facts are collected over batched SSH exec
+channels every 60s.
+
+**Severity is derived.** Categorical facets score
+`1 - (hosts sharing my value / hosts with a value)`. Numeric facets score by
+normalised distance from the peer median.
+
+**Flagging is separate from ranking.** A numeric facet is an outlier only
+outside the Tukey fence (`Q1 - 1.5·IQR`, `Q3 + 1.5·IQR`). Without this, a fleet
+whose disks run evenly from 40% to 79% reports all forty hosts as diverging —
+true, and useless.
+
+**Unprobed is not diverging.** Hosts with no facts are excluded from every
+denominator and reported separately.
+
+**A missing fact is a stated fact.** Facets declare a platform and a privilege.
+`systemd units` is Linux-only and reports `unsupported` on macOS rather than as
+a difference. Config-file hashes distinguish `not installed` from
+`permission denied`. The UI reports facets *collectable on this platform*, and
+how many need privileges, so the count shown is what was attempted.
+
+**Verdicts are enumerated templates over co-occurrence.** They name what was
+observed and cite the facets behind it; they never assert a cause the data
+cannot support. A host at consensus gets no verdict, and an unprobed host gets
+none either — silence is a correct output.
+
+Facets: kernel · os release · cpu model · cpu count · mem total · openssl ·
+timezone · ntp sync · ssh host key algo · disk / · uptime · load per core ·
+listening ports · systemd units (Linux) · plus one per configured config-file
+path and package.
+
+Live end-to-end test:
+
+```sh
+ESSH_LIVE_SSH=host ESSH_LIVE_KEY=~/.ssh/id_ed25519 \
+  cargo test --bin essh live_divergence -- --ignored --nocapture
+```
+
+## 5. Not done
+
+- **TLS certificate expiry** is listed as a facet in the design but has no
+  collector, because it needs to know which certificate. The enum variant was
+  removed rather than left as a claim without an implementation.
+- **Privilege escalation.** Facets declare `Privilege::Root` and the count is
+  surfaced, but ESSH never attempts sudo. Unreadable files report why.
+- **Peer-set inference from facts** rather than tags. Tags are user-maintained
+  and often are not; inferring peers from the facts themselves is circular with
+  collection and needs design.
+- **The GPU renderer.** The design proposed replacing ratatui + crossterm with
+  wgpu and an own VT core. Everything above ships on the existing stack; that
+  decision is deferred until divergence has earned it.
+
+---
+
+# Addendum 2 — building out the ESSH 2.0 spec
+
+Built on `feat/n0-collector-divergence`. This covers §2 (launcher), §3
+(session splits), §4 (workspaces), §5 (connection failure diagnosis), §6
+(ssh_config compatibility) and §9 (benchmarks).
+
+## §6 — ssh_config, for real
+
+`src/sshconfig/` parses the user's actual config: `Include` (with globs, a
+recursion guard and reported failures), `Host` patterns with wildcards and
+negation, `Match host/user/all/final`, `Key=value` form, and OpenSSH's
+first-value-wins precedence. Percent tokens (`%h %p %r %u %n %d %l %L`)
+expand where they matter — `ProxyCommand` and `ControlPath` are unusable
+without it.
+
+**`Match exec` is never evaluated.** Listing hosts must not run arbitrary
+commands out of a config file.
+
+**The compatibility claim is a table, not a sentiment.** Every directive is
+Full, ViaSystemSsh or Unsupported, and the resolution carries the ones it did
+not honour so the UI can say so:
+
+```
+$ essh config ssh
+Directives ESSH does not honour natively:
+  proxycommand                 handled by delegating to the system ssh
+  proxyusefdpass               parsed, but not acted on
+```
+
+`essh config resolve <host>` is shaped like `ssh -G` on purpose: the two can
+be diffed. There is a differential test that does exactly that against every
+alias in the user's real config:
+
+```sh
+cargo test --bin essh differential -- --ignored --nocapture
+```
+
+Verified byte-identical to `ssh -G` on hostname, port, user, identityfile and
+expanded proxycommand.
+
+## §2 — the launcher
+
+`essh` with no arguments opens a search over every host ESSH knows: aliases
+from `~/.ssh/config` (no import step — §2's "no separate host-management
+system" is now literally true), ESSH's own config, and the cache.
+
+The matcher is the product, so its behaviour is specified by tests rather
+than by feel: subsequence matching (`pdb` → `prod-db`), word-start bonuses, a
+contiguous prefix beating scattered initials, and recency that breaks ties
+but never outranks a better textual match. Results are stable across
+identical searches, because a list that reshuffles between keystrokes makes
+Enter dangerous.
+
+Hosts reached via `ProxyCommand`/`ControlMaster` are marked *via system ssh*
+in the list, so that is known before connecting rather than mid-incident.
+
+## §5 — why a host will not connect
+
+`essh why <host>` runs a probe ladder and stops at the first failure:
+
+```
+Could not connect to prod-db
+
+Config    ✓  prod-db → 10.0.0.5:22
+Bastion   ✓  bastion → 127.0.0.1:2201 in 0ms
+DNS       ✓  10.0.0.5 (literal address)
+TCP:22    ✗  timed out after 2s
+SSH          not probed
+```
+
+Four states, not two: `Ok`, `Failed`, `Skipped` (no bastion configured) and
+`NotProbed` — which renders blank, never as a tick. A ladder that shows ✓ for
+something it never tested is worse than no ladder.
+
+The `SSH` rung reads the server's identification string, which separates "the
+port is open" from "sshd is listening" — the port-forward-pointing-at-the-
+wrong-service case.
+
+`ProxyJump` targets are resolved through the config, because they are usually
+aliases; probing the literal string produced a DNS failure for a name that
+was never meant to be resolved.
+
+Authentication failures have a taxonomy, because the three publickey cases
+share one OpenSSH message and need three different fixes: *no key offered*,
+*key rejected*, and *algorithm refused* — the `ssh-rsa` deprecation, where
+the key is fine and the server will not accept its signature algorithm.
+Anything unrecognised is carried verbatim rather than forced into a bucket.
+
+## §4 — workspaces
+
+`essh workspace save|list|show|open|remove`. A subcommand rather than a bare
+argument, so a host genuinely named `workspace` stays reachable.
+
+Each session may carry an `on_connect` command. `tmux new -A -s essh` is what
+makes restore restore *work* rather than four fresh shells in `$HOME` — using
+the tool §4 already says to use for persistence, rather than reimplementing
+it. Saving without one prints that caveat.
+
+**Restore is partial by default and reports honestly:** "restored 2 of 3
+sessions in production — prod-db did not connect", with each failure carrying
+its diagnosis from the ladder above.
+
+Restore happens one host per tick with a bounded pre-probe. Doing it in a
+single pass froze the event loop — nothing rendered, no key was read, and one
+unreachable host hung the UI until its TCP timeout.
+
+## §3 — session splits
+
+`src/panes/` is a layout tree producing the §3 diagram: four live sessions,
+two over two. `^A s` splits vertically, `^A S` horizontally, `^A o` moves
+focus. Each pane's terminal is resized to its own rectangle, so the remote's
+idea of the window matches what is drawn.
+
+Two invariants under test: closing a pane promotes its sibling rather than
+leaving an empty region, and session indices are renumbered when a session is
+removed — without that, a pane renders a different session's terminal, which
+looks exactly like data corruption.
+
+v1's "split" showed one terminal beside the *monitor*; that still exists on
+`^A M`.
+
+## §9 — benchmarks
+
+`essh bench` measures things that can fail, which the spec's own targets
+mostly cannot:
+
+```
+  ssh_config parse           0.186 ms   12922 bytes                    ✓ (target 10ms)
+  launcher search            0.595 ms   500 hosts, per keystroke       ✓ (target 16ms)
+  VT parse throughput      124.452 MiB/s coloured log output
+  divergence consensus       0.619 ms   40 hosts × 4 facets            ✓ (target 50ms)
+```
+
+It also prints what it does *not* measure — added keystroke latency versus
+plain `ssh`, sustained throughput over a live channel, memory at 30 sessions
+— because those need a real host and a local number for them would be
+precise and meaningless.
+
+## Bugs found while building this
+
+Each has a regression test.
+
+- **The TUI silently re-trusted changed host keys.** `HostKeyStatus::Changed`
+  called `trust_host` with a comment reading "auto-accept in TUI mode for
+  now". A changed host key is the signal host key verification exists to
+  raise. It now refuses the connection and says why.
+- **Deleting a host had no confirmation.** One keystroke rewrote the config
+  and dropped the cached key, with no undo. It ate a host during development.
+- **`Ctrl+A` in the dashboard opened the Add Host dialog**, because the
+  command prefix is only intercepted while a shell has focus and the `a` arm
+  had no modifier guard.
+- **Status messages never rendered.** The footer was a fixed three rows, so
+  `set_status` output was laid out past the bottom edge — every error and
+  result message in the app.
+- **Divergence facets collected only if you visited the monitor first**,
+  because they reused the platform the metrics collector detected and metrics
+  only sweep while the monitor is open.
+- **A newly connected host waited up to 60s** before showing any facts.
+- **Container roots vanished** from the monitor: `parse_df` skipped `overlay`
+  as a pseudo-filesystem, leaving a bind-mounted `/etc/hosts` as the only
+  "disk".
+- **ESSH reported itself** in its own process list.
+- **The workspace restore recorded failed sessions as connected**, because
+  `open_session` reports failure by setting a status and still returning
+  `Ok`.
+
+## Still not built
+
+- **The wgpu renderer** (handoff N1–N4). Everything above runs on ratatui.
+- **`ControlMaster`/`ProxyCommand` transports.** They are parsed, reported
+  and marked *via system ssh*, but ESSH does not yet shell out to `ssh` for
+  them — so those hosts are identified rather than reached.
+- **Layout persistence in workspaces.** `Layout` round-trips through the file
+  but restore currently opens sessions as tabs.
+- **`essh` connecting by bare alias** (`essh prod-db`) still goes through
+  `essh connect prod-db`.
+
+
+---
+
+# Addendum 3 — implementing the design handoff
+
+The first two addenda built *product* scope out of the ESSH 2.0 spec. They did
+not implement `source/ESSH 2.0.html`, which is the design. This one does.
+
+The gap was not cosmetic. The handoff's central rule is a **chrome rule**, and
+v1 — and my first pass — violated it directly.
+
+## The chrome rule
+
+> Dashboards are dashboards. Hosts and Fleet keep a tab strip, because that is
+> where you navigate. **The shell gets nothing** — no tab strip, no status
+> row, no borders, no per-pane titles, even in split.
+
+The session view now renders the terminal and nothing else. It previously
+spent four rows on a tab bar, a status line and a keybind footer before a
+single line of remote output. Splits lost their per-pane borders and titles
+too; a focused pane is marked by a one-column bar, which costs no row.
+
+Instrumentation over a shell is now transient or on-demand only:
+
+* **`src/tui/hud.rs`** — appears on a *change*, states why in words, carries
+  the numbers it actually has, and fades after ~4s. It is drawn over the
+  terminal's last row rather than being given a row, so the shell never
+  reflows when it comes and goes. Raised by divergence changes, reconnects
+  and workspace restores; `Esc` dismisses it.
+* Overlays (divergence, palette) are floating cards on a dimmed scrim, not
+  bordered boxes — *"no box-drawing needed when you can composite."*
+
+## The design system
+
+`src/design/mod.rs` holds every value from the handoff, so screens read from
+one place rather than respelling colours:
+
+```
+bg #0c1418   fg #c8d4d9   dim #6d8189   faint #42555d   rule #1c282e
+green #5cd989  cyan #5fdcff  amber #f0c060  red #ff7878  violet #b8a8e8
+RAMP_DIV  #2c3a42 → #4a5a60 → #8a8f6a → #f0c060 → #ff7878
+```
+
+**Magnitude ramps run cool → bright: high means busy, not bad.** v1's
+`pct_color` — `<50% green / <80% yellow / >80% red` — is deleted, not
+rewired. Only genuinely bounded-bad values (disk fullness, cert expiry) keep
+green → amber → red, and only on meters.
+
+**`RAMP_DIV` measures agreement, not magnitude.** Consensus is faint; red
+means *you are alone*.
+
+Also transcribed: the `.box` idiom (title on the rule, annotation opposite —
+no rows wasted), faint tracked column headers with a cyan `DIVERGE`,
+right-aligned tabular numerics, the current row tinted with a cyan inset bar,
+tags as chips, `⏎ connect` footers with cyan keys, and italic-faint empty
+states.
+
+## What is approximated, and why
+
+The design was drawn for a GPU renderer. Two things do not translate, and are
+marked rather than faked:
+
+* **Vector sparklines become braille.** The handoff's own graph-primitives
+  section carries the braille invariants forward "where braille is used".
+  Levels are absolute with a derived ceiling, colour is by value on one-row
+  graphs, and an empty series draws nothing rather than a flat line.
+* **The 3px peer ribbon is not drawn.** A terminal has no sub-cell row, and
+  spending a whole row on it would violate the chrome rule it exists to
+  satisfy.
+
+## Screens
+
+| # | Screen | State |
+|---|--------|-------|
+| 1 | Hosts | Rebuilt: box idiom, chips, cyan DIVERGE, selection bar, GROUPS panel, boxes sized to content |
+| 2 | Fleet | Rebuilt: facet consensus headline, per-facet agreement meters, hosts-by-divergence, agreement collapsed to one line, reachability demoted |
+| 3 | Session terminal | Rebuilt: zero chrome + HUD |
+| 4 | Host Monitor | Rebuilt: three headline boxes carrying peer medians, DISK beside VS PEERS, PROCESSES, footer |
+| 5 | Split | Rebuilt: shell keeps zero chrome, narrow pane drops to essentials, single hairline divider |
+| 6 | Command palette | Rebuilt: scrim + floating card; **emoji replaced with single-width glyphs** — they are double-width in a terminal and shear the grid |
+
+## Still not matching
+
+- **Fonts.** The handoff specifies JetBrains Mono / Berkeley Mono / SF Mono
+  and real CSS-grade typography — 9.5px tracked labels, 19–26px headline
+  numerals. A terminal has one cell size, so hierarchy is carried by colour
+  and weight alone. Headline numerals are bold white; they are not larger.
+- **Per-facet meters in the Fleet consensus box** are a single column, where
+  the design has a labelled list of six.
+- **Sessions and Config tabs** are still v1. The handoff deliberately did not
+  redesign them ("no v1 screenshots were provided, and inventing them would
+  repeat the mistake this revision corrects"), so neither did I.

@@ -1,9 +1,10 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph, Row, Table},
+    widgets::{Clear, Paragraph, Row, Table},
 };
 
 use crate::portfwd::PortForwardManager;
+use crate::design as d;
 use crate::theme::Theme;
 
 pub fn render(
@@ -24,14 +25,21 @@ pub fn render(
 
     f.render_widget(Clear, popup);
 
-    let block = Block::default()
-        .title(" Port Forwards ")
-        .title_style(Style::default().fg(theme.brand).bold())
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border));
-
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
+    let inner = d::pane(
+        f,
+        popup,
+        theme,
+        &d::PanelOpts {
+            title: Some("port forwards"),
+            foot_left: &[
+                ("↑↓", " select"),
+                ("a", " add"),
+                ("d", " delete"),
+                ("⎋", " close"),
+            ],
+            ..Default::default()
+        },
+    );
 
     // Layout: table area + footer
     let chunks = Layout::default()
@@ -106,19 +114,7 @@ pub fn render(
             Span::styled("█", Style::default().fg(theme.brand)),
         ]));
         f.render_widget(input_line, chunks[1]);
-    } else {
-        let footer = Paragraph::new(Line::from(vec![
-            Span::styled("↑↓", Style::default().fg(theme.key_hint)),
-            Span::raw(":Select  "),
-            Span::styled("a", Style::default().fg(theme.key_hint)),
-            Span::raw(":Add  "),
-            Span::styled("d", Style::default().fg(theme.key_hint)),
-            Span::raw(":Delete  "),
-            Span::styled("t", Style::default().fg(theme.key_hint)),
-            Span::raw(":Theme  "),
-            Span::styled("Esc", Style::default().fg(theme.key_hint)),
-            Span::raw(":Close"),
-        ]));
-        f.render_widget(footer, chunks[1]);
     }
+    // No footer row when idle: those binds are on the panel's bottom rule.
+    // The row is kept for the add-form's input line above, which needs it.
 }
