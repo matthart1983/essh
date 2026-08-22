@@ -58,7 +58,7 @@ ESSH is for people who manage real systems and want their SSH client to act like
 
 ## Demo
 
-![ESSH Demo](docs/media/essh-demo.gif)
+![ESSH Demo](https://raw.githubusercontent.com/matthart1983/essh/main/docs/media/essh-demo.gif)
 
 <p align="center">
   <sub>Dashboard, multi-session terminal, host monitor, split pane, command palette, file browser, and port forwarding in one flow.</sub>

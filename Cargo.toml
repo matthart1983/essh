@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "essh"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Enhanced SSH client with concurrent sessions, real-time host diagnostics, and a Netwatch-inspired TUI"
 license = "MIT"
@@ -14,7 +14,10 @@ readme = "README.md"
 keywords = ["ssh", "tui", "terminal", "devops", "monitoring"]
 categories = ["command-line-utilities", "network-programming"]
 authors = ["Matt Hartley <matthew.t.hartley@gmail.com>"]
-exclude = ["target/", ".git/"]
+# Demo media lives in the repo for the README, not in the crate — every
+# `cargo install` would otherwise pull 1.5MB of GIF it cannot display. The PTY
+# harness needs a terminal and containers, so it cannot run from a crate box.
+exclude = ["target/", ".git/", "docs/", "tests/tui_harness.rs", "*.tape", "renderer/"]
 
 [[bin]]
 name = "essh"
