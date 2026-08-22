@@ -318,9 +318,13 @@ fn an_unreachable_host_does_not_wedge_the_ui() {
     // The attempt is announced rather than swallowed.
     tui.expect("Connecting", Duration::from_secs(6));
 
-    // The bounded wait must end and the app must still be drawing after it.
-    std::thread::sleep(Duration::from_secs(16));
-    tui.expect_responsive(Duration::from_secs(6));
+    // Wait for the evidence of recovery rather than for a fixed duration.
+    // How long an unroutable address takes to fail depends on the network
+    // stack — a CI runner may reject instantly where a laptop waits out the
+    // full timeout — so sleeping past "however long it should take" is a
+    // guess that eventually goes wrong on someone else's machine.
+    tui.expect("could not connect", Duration::from_secs(45));
+    tui.expect_responsive(Duration::from_secs(10));
     tui.quit();
 }
 
