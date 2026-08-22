@@ -3089,6 +3089,34 @@ async fn connect_session_with_auth_candidates(
     username: String,
     auth_candidates: Vec<AuthMethod>,
 ) -> Result<(ConnectConfig, SshSession, String, Option<String>), SshError> {
+    // With no key to offer, the loop below never runs and the function used
+    // to return an *auth* error without touching the network — which sent the
+    // caller to a password prompt for a host it had never reached. Asking for
+    // a password to a machine that is not answering is worse than useless: it
+    // blames the credentials for a reachability problem.
+    //
+    // So establish reachability first. If the host answers, an auth error is
+    // the honest verdict and prompting for a password is a reasonable next
+    // step; if it does not, say so.
+    if auth_candidates.is_empty() {
+        let addr = format!("{hostname}:{port}");
+        let timeout = config.connect_timeout();
+        match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(&addr)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                return Err(SshError::Connection(format!(
+                    "{addr} refused the connection: {e}"
+                )))
+            }
+            Err(_) => {
+                return Err(SshError::Connection(format!(
+                    "no response from {addr} after {}s",
+                    timeout.as_secs()
+                )))
+            }
+        }
+    }
+
     let mut last_auth_error = None;
 
     for auth in auth_candidates {

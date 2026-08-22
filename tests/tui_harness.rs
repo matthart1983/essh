@@ -324,6 +324,13 @@ fn an_unreachable_host_does_not_wedge_the_ui() {
     // full timeout — so sleeping past "however long it should take" is a
     // guess that eventually goes wrong on someone else's machine.
     tui.expect("could not connect", Duration::from_secs(45));
+    // And it must not have asked for a password: the host never answered, so
+    // the credentials were never the problem.
+    assert!(
+        !tui.text().contains("password:"),
+        "prompted for a password on a host that never answered:\n{}",
+        tail(&tui.text(), 12)
+    );
     tui.expect_responsive(Duration::from_secs(10));
     tui.quit();
 }
