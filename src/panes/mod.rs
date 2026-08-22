@@ -275,7 +275,10 @@ impl PaneTree {
                 let pct = (ratio * 100.0).round().clamp(10.0, 90.0) as u16;
                 let chunks = Layout::default()
                     .direction(direction.to_ratatui())
-                    .constraints([Constraint::Percentage(pct), Constraint::Percentage(100 - pct)])
+                    .constraints([
+                        Constraint::Percentage(pct),
+                        Constraint::Percentage(100 - pct),
+                    ])
                     .split(area);
                 self.place(first, chunks[0], out);
                 self.place(second, chunks[1], out);
@@ -319,7 +322,10 @@ mod tests {
         assert_eq!(placed.len(), 4);
 
         // Every pane has real area and none overlap in total coverage.
-        let total: u32 = placed.iter().map(|p| p.area.width as u32 * p.area.height as u32).sum();
+        let total: u32 = placed
+            .iter()
+            .map(|p| p.area.width as u32 * p.area.height as u32)
+            .sum();
         assert_eq!(total, 100 * 40, "panes must tile the area exactly");
         for p in &placed {
             assert!(p.area.width > 0 && p.area.height > 0);

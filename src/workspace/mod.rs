@@ -279,7 +279,10 @@ mod tests {
             .save_in(dir.path())
             .unwrap();
         }
-        assert_eq!(Workspace::list_in(dir.path()), vec!["dev", "production", "staging"]);
+        assert_eq!(
+            Workspace::list_in(dir.path()),
+            vec!["dev", "production", "staging"]
+        );
     }
 
     #[test]
@@ -337,7 +340,10 @@ mod tests {
         let s = report.summary();
         assert!(s.contains("2 of 3"), "{}", s);
         assert!(s.contains("prod-db"), "{}", s);
-        assert_eq!(report.failed(), vec![("prod-db", "TCP:22: timed out after 5s")]);
+        assert_eq!(
+            report.failed(),
+            vec![("prod-db", "TCP:22: timed out after 5s")]
+        );
     }
 
     #[test]
@@ -367,7 +373,9 @@ mod tests {
         ws.layout = Layout::VerticalSplit;
         ws.save_in(dir.path()).unwrap();
         assert_eq!(
-            Workspace::load_from(dir.path(), "production").unwrap().layout,
+            Workspace::load_from(dir.path(), "production")
+                .unwrap()
+                .layout,
             Layout::VerticalSplit
         );
 

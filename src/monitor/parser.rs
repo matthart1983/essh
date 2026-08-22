@@ -275,13 +275,10 @@ pub fn parse_uptime(raw: &str) -> u64 {
 ///
 /// Returns `None` rather than `0.0` when the output cannot be read.
 pub fn parse_iostat_cpu(raw: &str) -> Option<f64> {
-    let last = raw
-        .lines()
-        .filter(|l| {
-            let t = l.trim();
-            !t.is_empty() && t.chars().next().is_some_and(|c| c.is_ascii_digit())
-        })
-        .next_back()?;
+    let last = raw.lines().rfind(|l| {
+        let t = l.trim();
+        !t.is_empty() && t.chars().next().is_some_and(|c| c.is_ascii_digit())
+    })?;
 
     let parts: Vec<&str> = last.split_whitespace().collect();
     if parts.len() < 6 {
@@ -734,7 +731,8 @@ en0        1500  192.168.0   192.168.0.7        2932778     - 3899988586   84127
     fn macos_netstat_tolerates_interfaces_with_and_without_a_mac() {
         // gif0* has no Address column; en0 has a MAC. Both must parse without
         // the column shift throwing the byte counters off.
-        let raw = "Name  Mtu  Network   Address        Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll\n\
+        let raw =
+            "Name  Mtu  Network   Address        Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll\n\
                    gif0* 1280 <Link#2>                    0     0      0     0     0      0    0\n\
                    en0   1500 <Link#14> 4e:ac:1c:ae:e2:ff 10    0    500    20     0    900    0\n";
         assert_eq!(parse_netstat_ib(raw).unwrap(), (500, 900));

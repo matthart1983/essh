@@ -10,7 +10,6 @@
 //! divergence report that quietly compares eight of seventeen facets while
 //! claiming seventeen is worse than one that compares eight and says so.
 
-
 use russh::client::Handle;
 
 use super::{FacetKey, FacetValue, HostFacts};
@@ -651,7 +650,10 @@ mod tests {
     #[test]
     fn uptime_parser_handles_both_platform_shapes() {
         // Linux /proc/uptime
-        assert_eq!(uptime_days("864000.12 1200.5"), Some(FacetValue::Number(10.0)));
+        assert_eq!(
+            uptime_days("864000.12 1200.5"),
+            Some(FacetValue::Number(10.0))
+        );
         // macOS boottime + now
         assert_eq!(
             uptime_days("{ sec = 1786000000, usec = 5 }\n1786864000\n"),
@@ -712,7 +714,7 @@ mod tests {
         let glued = "===0===\nssh-rsa,===1===\n4%\n===END===\n";
         let s = crate::monitor::collector::split_sections(glued);
         assert!(
-            s.get("1").is_none(),
+            !s.contains_key("1"),
             "a glued marker cannot be recovered — which is why we emit \\n first"
         );
     }

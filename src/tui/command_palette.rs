@@ -3,8 +3,8 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph},
 };
 
-use crate::theme::Theme;
 use crate::design as d;
+use crate::theme::Theme;
 use crate::tui::meta_key_hint;
 
 use super::{AppView, DashboardTab, HostDisplay, HostStatus};
@@ -180,7 +180,7 @@ impl CommandPalette {
                 entry.score = fuzzy_score(&q, &entry.label, &entry.detail);
             }
             entries.retain(|e| e.score > 0);
-            entries.sort_by(|a, b| b.score.cmp(&a.score));
+            entries.sort_by_key(|e| std::cmp::Reverse(e.score));
         }
 
         self.entries = entries;
@@ -320,7 +320,9 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
 
     let list_top = inner.y + 2;
     let list_height = inner.height.saturating_sub(2) as usize;
-    let scroll = palette.selected.saturating_sub(list_height.saturating_sub(1));
+    let scroll = palette
+        .selected
+        .saturating_sub(list_height.saturating_sub(1));
 
     for (vi, ei) in (scroll..scroll + list_height.min(palette.entries.len())).enumerate() {
         let Some(entry) = palette.entries.get(ei) else {

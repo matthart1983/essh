@@ -111,10 +111,7 @@ fn body<'a>(
             d.host.clone(),
             Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!("  vs {}", d.peer_set),
-            Style::default().fg(d::DIM),
-        ),
+        Span::styled(format!("  vs {}", d.peer_set), Style::default().fg(d::DIM)),
     ]));
 
     // Never claim a facet count we did not attempt. On macOS several of the
@@ -150,10 +147,7 @@ fn body<'a>(
             "VERDICT",
             Style::default().fg(d::CYAN).add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(Span::styled(
-            v.text,
-            Style::default().fg(d::FG),
-        )));
+        lines.push(Line::from(Span::styled(v.text, Style::default().fg(d::FG))));
         lines.push(Line::from(Span::styled(
             format!(
                 "  evidence: {}",

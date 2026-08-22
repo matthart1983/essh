@@ -167,11 +167,7 @@ impl HostMetricsCollector {
     }
 
     /// Linux: everything comes from `/proc`.
-    async fn collect_linux(
-        &self,
-        get: &impl Fn(&str) -> String,
-        status: &mut CollectionStatus,
-    ) {
+    async fn collect_linux(&self, get: &impl Fn(&str) -> String, status: &mut CollectionStatus) {
         let cpu_raw = get("CPUSTAT");
         let prev_cpu = self.prev_cpu_raw.read().await.clone();
 
@@ -236,11 +232,7 @@ impl HostMetricsCollector {
     }
 
     /// macOS: seven different sources, each of which can fail on its own.
-    async fn collect_macos(
-        &self,
-        get: &impl Fn(&str) -> String,
-        status: &mut CollectionStatus,
-    ) {
+    async fn collect_macos(&self, get: &impl Fn(&str) -> String, status: &mut CollectionStatus) {
         let cpu = match parser::parse_macos_cpu(&get("CPUSTAT")) {
             Some(pct) => {
                 status.cpu = MetricState::Collected;
@@ -355,7 +347,9 @@ impl HostMetricsCollector {
         // there is genuinely no reading — not 0 B/s.
         let now = Instant::now();
         let prev = *self.prev_net_counters.read().await;
-        let elapsed = now.duration_since(*self.last_net_time.read().await).as_secs_f64();
+        let elapsed = now
+            .duration_since(*self.last_net_time.read().await)
+            .as_secs_f64();
 
         let net = match (net_counters, prev) {
             (Some(curr), Some(prev)) if elapsed > 0.0 => {
@@ -554,7 +548,11 @@ mod tests {
             s.get("MEMSIZE").expect("MEMSIZE"),
         )
         .expect("memory must be readable on macOS");
-        assert!(total_kb > 1024 * 1024, "total {} KB is implausible", total_kb);
+        assert!(
+            total_kb > 1024 * 1024,
+            "total {} KB is implausible",
+            total_kb
+        );
         assert!(used_kb > 0 && used_kb <= total_kb, "used {} KB", used_kb);
 
         // Load: a Mac that is running this test has a non-negative load.
@@ -652,7 +650,10 @@ mod tests {
         // The v1 bug, asserted directly: a live host must not report zeros.
         let mem = m.mem_percent().expect("memory must be collected");
         assert!(mem > 0.0 && mem < 100.0, "implausible memory {}%", mem);
-        assert!(m.uptime_opt().expect("uptime") > 0, "uptime must be non-zero");
+        assert!(
+            m.uptime_opt().expect("uptime") > 0,
+            "uptime must be non-zero"
+        );
         let (l1, _, _) = m.load_opt().expect("load must be collected");
         assert!(l1 >= 0.0);
         assert!(m.cpu_percent_opt().is_some(), "CPU must be collected");
@@ -683,9 +684,15 @@ mod tests {
         for (k, v) in &facts.facets {
             eprintln!("  {:<22} {}", k.label(), v.as_display());
         }
-        assert!(known >= 6, "expected most facets to be readable, got {}", known);
         assert!(
-            facts.facets.contains_key(&crate::divergence::FacetKey::Kernel),
+            known >= 6,
+            "expected most facets to be readable, got {}",
+            known
+        );
+        assert!(
+            facts
+                .facets
+                .contains_key(&crate::divergence::FacetKey::Kernel),
             "kernel facet must be present"
         );
     }
@@ -701,7 +708,10 @@ mod tests {
         }
         impl std::error::Error for E {}
 
-        assert_eq!(describe_exec_error(&E("operation timed out")), "collector timed out");
+        assert_eq!(
+            describe_exec_error(&E("operation timed out")),
+            "collector timed out"
+        );
         assert_eq!(
             describe_exec_error(&E("channel open failure")),
             "host refused an exec channel"

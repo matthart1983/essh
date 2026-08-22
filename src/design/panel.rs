@@ -185,8 +185,8 @@ fn insert_right(
     border: Style,
 ) {
     let w = text.width() as u16 + 4; // ┤ + space + text + space + ├
-    // `- 1` leaves a rule cell between the insert and the corner; without it
-    // the bracket butts the corner and the panel reads as if it overflowed.
+                                     // `- 1` leaves a rule cell between the insert and the corner; without it
+                                     // the bracket butts the corner and the panel reads as if it overflowed.
     if w + 2 > x1 || x1 - 1 - w <= x0 {
         return;
     }
@@ -323,7 +323,10 @@ mod tests {
         let top = row(&b, 0);
         // The title is truncated by the panel width, which is correct; what
         // must not happen is the right label displacing it.
-        assert!(top.starts_with("╭─┤ monit"), "the title must survive: {top:?}");
+        assert!(
+            top.starts_with("╭─┤ monit"),
+            "the title must survive: {top:?}"
+        );
         assert!(!top.contains('├'), "no right insert should fit: {top:?}");
     }
 
@@ -341,7 +344,12 @@ mod tests {
     fn focus_changes_the_border_colour_not_the_layout() {
         let t = theme::dark();
         let mut plain = buf(20, 4);
-        let a = panel(&mut plain, Rect::new(0, 0, 20, 4), &t, &PanelOpts::default());
+        let a = panel(
+            &mut plain,
+            Rect::new(0, 0, 20, 4),
+            &t,
+            &PanelOpts::default(),
+        );
         let mut focused = buf(20, 4);
         let b2 = panel(
             &mut focused,
@@ -356,4 +364,3 @@ mod tests {
         assert_ne!(plain[(0, 0)].style().fg, focused[(0, 0)].style().fg);
     }
 }
-

@@ -44,17 +44,42 @@ pub enum Support {
 pub fn support_for(keyword: &str) -> Support {
     match keyword.to_ascii_lowercase().as_str() {
         // Fully honoured by the native client.
-        "hostname" | "port" | "user" | "identityfile" | "identitiesonly" | "proxyjump"
-        | "serveraliveinterval" | "serveralivecountmax" | "connecttimeout" | "requesttty"
-        | "stricthostkeychecking" | "userknownhostsfile" | "forwardagent" | "identityagent"
-        | "localforward" | "remoteforward" | "dynamicforward" | "setenv" | "sendenv"
-        | "compression" | "addkeystoagent" | "include" | "match" | "host" => Support::Full,
+        "hostname"
+        | "port"
+        | "user"
+        | "identityfile"
+        | "identitiesonly"
+        | "proxyjump"
+        | "serveraliveinterval"
+        | "serveralivecountmax"
+        | "connecttimeout"
+        | "requesttty"
+        | "stricthostkeychecking"
+        | "userknownhostsfile"
+        | "forwardagent"
+        | "identityagent"
+        | "localforward"
+        | "remoteforward"
+        | "dynamicforward"
+        | "setenv"
+        | "sendenv"
+        | "compression"
+        | "addkeystoagent"
+        | "include"
+        | "match"
+        | "host" => Support::Full,
 
         // Understood, delegated. ProxyCommand is the important one: `nc`,
         // `cloudflared access`, `aws ssm start-session` and `gcloud compute
         // ssh` are how a great many production hosts are actually reached.
-        "proxycommand" | "controlmaster" | "controlpath" | "controlpersist"
-        | "certificatefile" | "pkcs11provider" | "securitykeyprovider" | "gssapiauthentication"
+        "proxycommand"
+        | "controlmaster"
+        | "controlpath"
+        | "controlpersist"
+        | "certificatefile"
+        | "pkcs11provider"
+        | "securitykeyprovider"
+        | "gssapiauthentication"
         | "remotecommand" => Support::ViaSystemSsh,
 
         // Parsed and surfaced, but not acted on.
@@ -194,11 +219,7 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
                 (0..=t.len()).any(|i| inner(&p[1..], &t[i..]))
             }
             Some(b'?') => !t.is_empty() && inner(&p[1..], &t[1..]),
-            Some(c) => {
-                !t.is_empty()
-                    && t[0].eq_ignore_ascii_case(c)
-                    && inner(&p[1..], &t[1..])
-            }
+            Some(c) => !t.is_empty() && t[0].eq_ignore_ascii_case(c) && inner(&p[1..], &t[1..]),
         }
     }
     inner(pattern.as_bytes(), text.as_bytes())
@@ -479,12 +500,7 @@ fn parse_match(value: &str) -> Vec<Criterion> {
     out
 }
 
-fn apply_option(
-    out: &mut ResolvedHost,
-    key: &str,
-    value: &str,
-    seen_scalar: &mut HashSet<String>,
-) {
+fn apply_option(out: &mut ResolvedHost, key: &str, value: &str, seen_scalar: &mut HashSet<String>) {
     // Scalars: first value wins, per OpenSSH.
     let mut once = |set: &mut dyn FnMut()| {
         if seen_scalar.insert(key.to_string()) {
@@ -803,7 +819,11 @@ mod tests {
     fn a_self_including_config_terminates() {
         let dir = tempfile::tempdir().unwrap();
         let main = dir.path().join("config");
-        std::fs::write(&main, format!("Include {}\nHost a\n  Port 22\n", main.display())).unwrap();
+        std::fs::write(
+            &main,
+            format!("Include {}\nHost a\n  Port 22\n", main.display()),
+        )
+        .unwrap();
         // The guarantee under test is simply that this returns.
         let cfg = SshConfig::load(&main);
         assert_eq!(cfg.sources.len(), 1);
@@ -813,7 +833,11 @@ mod tests {
     fn a_missing_include_is_reported_not_fatal() {
         let dir = tempfile::tempdir().unwrap();
         let main = dir.path().join("config");
-        std::fs::write(&main, "Include /nonexistent/nope.conf\nHost a\n  Port 2222\n").unwrap();
+        std::fs::write(
+            &main,
+            "Include /nonexistent/nope.conf\nHost a\n  Port 2222\n",
+        )
+        .unwrap();
         let cfg = SshConfig::load(&main);
         assert_eq!(cfg.broken_includes.len(), 1);
         // The rest of the file still parses.
@@ -854,7 +878,11 @@ mod tests {
 
         let mut compared = 0usize;
         for alias in &aliases {
-            let out = match std::process::Command::new("ssh").arg("-G").arg(alias).output() {
+            let out = match std::process::Command::new("ssh")
+                .arg("-G")
+                .arg(alias)
+                .output()
+            {
                 Ok(o) if o.status.success() => o,
                 _ => continue,
             };
@@ -863,7 +891,9 @@ mod tests {
             let field = |name: &str| -> Option<String> {
                 text.lines()
                     .find(|l| {
-                        l.split_whitespace().next().map(|k| k.eq_ignore_ascii_case(name))
+                        l.split_whitespace()
+                            .next()
+                            .map(|k| k.eq_ignore_ascii_case(name))
                             == Some(true)
                     })
                     .and_then(|l| l.split_once(char::is_whitespace))

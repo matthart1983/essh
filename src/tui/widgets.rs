@@ -113,4 +113,3 @@ mod tests {
         assert_eq!(bar.chars().count(), 10);
     }
 }
-

@@ -127,7 +127,10 @@ mod tests {
     #[test]
     fn a_future_timestamp_is_named_not_rendered_as_a_duration() {
         let now = at("2026-03-04T09:40:05Z");
-        assert_eq!(relative_since(at("2026-03-05T09:40:05Z"), now), "clock skew");
+        assert_eq!(
+            relative_since(at("2026-03-05T09:40:05Z"), now),
+            "clock skew"
+        );
     }
 
     #[test]
@@ -139,7 +142,10 @@ mod tests {
     #[test]
     fn relative_time_accepts_the_format_the_cache_writes() {
         // CacheDb stores chrono's Utc::now().to_rfc3339().
-        let iso = Utc.with_ymd_and_hms(2026, 3, 2, 9, 40, 5).unwrap().to_rfc3339();
+        let iso = Utc
+            .with_ymd_and_hms(2026, 3, 2, 9, 40, 5)
+            .unwrap()
+            .to_rfc3339();
         assert_ne!(relative_time(&iso), "unknown");
     }
 

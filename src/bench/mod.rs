@@ -241,7 +241,11 @@ pub fn bench_divergence(hosts: usize) -> BenchResult {
         let mut f = HostFacts::new(&name);
         f.facets.insert(
             FacetKey::Kernel,
-            FacetValue::Text(if i == 7 { "6.1.0-15".into() } else { "6.1.0-18".into() }),
+            FacetValue::Text(if i == 7 {
+                "6.1.0-15".into()
+            } else {
+                "6.1.0-18".into()
+            }),
         );
         f.facets
             .insert(FacetKey::OsRelease, FacetValue::Text("debian 12".into()));
@@ -298,7 +302,11 @@ pub fn run_all() {
         bench_tui_frame(),
     ];
 
-    println!("ESSH benchmarks  ({}, {})", std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "ESSH benchmarks  ({}, {})",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     println!();
     for r in &results {
         let verdict = match r.within_target() {

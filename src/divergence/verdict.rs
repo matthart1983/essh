@@ -298,7 +298,11 @@ mod tests {
         let v = verdict_for(&compare("full", &set, &all)).expect("verdict");
         assert_eq!(v.pattern, "numeric-drift-alone");
         assert!(v.text.contains("median"), "{}", v.text);
-        assert!(v.text.to_lowercase().contains("matches its peers"), "{}", v.text);
+        assert!(
+            v.text.to_lowercase().contains("matches its peers"),
+            "{}",
+            v.text
+        );
     }
 
     #[test]

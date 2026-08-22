@@ -52,7 +52,15 @@ impl VirtualTerminal {
     }
 
     /// Resize the virtual terminal. Returns true if the size actually changed.
+    ///
+    /// Clamped to at least one cell in each axis. A zero-width or zero-height
+    /// screen makes `vt100` subtract past zero and panic, taking the whole
+    /// app down — and callers legitimately compute degenerate sizes, because
+    /// a split pane in a very narrow window really can be one column wide
+    /// before the divider is subtracted.
     pub fn resize(&mut self, rows: u16, cols: u16) -> bool {
+        let rows = rows.max(1);
+        let cols = cols.max(1);
         if rows == self.last_rows && cols == self.last_cols {
             return false;
         }

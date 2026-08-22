@@ -148,10 +148,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &HudState) {
     // Composite by painting the strip, since a terminal has no alpha. The
     // point of "alpha-blends over the shell" is that the shell does not
     // reflow — which holds, because these rows were never taken from it.
-    f.render_widget(
-        Block::default().style(Style::default().bg(d::RULE)),
-        row,
-    );
+    f.render_widget(Block::default().style(Style::default().bg(d::RULE)), row);
 
     let (glyph, glyph_color) = hud.reason.glyph();
     let mut spans = vec![
@@ -220,13 +217,19 @@ mod tests {
         let mut s = HudState::new();
         assert!(!s.is_visible());
 
-        s.on_change(Reason::Diverged("kernel is 1 release behind".into()), vitals());
+        s.on_change(
+            Reason::Diverged("kernel is 1 release behind".into()),
+            vitals(),
+        );
         assert!(s.is_visible());
 
         // The same reason again must not restart it — that would make it a
         // status bar that flickers rather than a transient notice.
         let first = s.current.as_ref().unwrap().shown_at;
-        s.on_change(Reason::Diverged("kernel is 1 release behind".into()), vitals());
+        s.on_change(
+            Reason::Diverged("kernel is 1 release behind".into()),
+            vitals(),
+        );
         assert_eq!(s.current.as_ref().unwrap().shown_at, first);
     }
 
@@ -242,7 +245,10 @@ mod tests {
     #[test]
     fn it_fades_rather_than_staying_up() {
         let mut s = HudState::new();
-        s.on_change(Reason::Notice("restored production".into()), Vitals::default());
+        s.on_change(
+            Reason::Notice("restored production".into()),
+            Vitals::default(),
+        );
         assert!(s.is_visible());
         // Backdate it past its lifetime.
         s.current.as_mut().unwrap().shown_at = Instant::now() - LIFETIME - Duration::from_millis(1);

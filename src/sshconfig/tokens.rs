@@ -83,7 +83,10 @@ mod tests {
     #[test]
     fn proxycommand_tokens_expand() {
         let out = expand_tokens("cloudflared access ssh --hostname %h --port %p", &ctx());
-        assert_eq!(out, "cloudflared access ssh --hostname 10.0.0.5 --port 2222");
+        assert_eq!(
+            out,
+            "cloudflared access ssh --hostname 10.0.0.5 --port 2222"
+        );
     }
 
     #[test]
@@ -124,6 +127,9 @@ mod tests {
 
     #[test]
     fn home_expands_for_identityfile() {
-        assert_eq!(expand_tokens("%d/.ssh/id_ed25519", &ctx()), "/Users/matt/.ssh/id_ed25519");
+        assert_eq!(
+            expand_tokens("%d/.ssh/id_ed25519", &ctx()),
+            "/Users/matt/.ssh/id_ed25519"
+        );
     }
 }

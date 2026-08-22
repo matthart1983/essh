@@ -9,20 +9,20 @@ mod diagnostics;
 mod divergence;
 mod event;
 mod filetransfer;
+mod fleet;
 mod format;
 mod launcher;
-mod fleet;
 mod monitor;
-mod panes;
 mod notify;
+mod panes;
 mod portfwd;
 mod recording;
 mod session;
 mod ssh;
 mod sshconfig;
 mod theme;
-mod workspace;
 mod tui;
+mod workspace;
 
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -39,7 +39,10 @@ use ratatui::prelude::*;
 
 use audit::{AuditEventType, AuditLogger};
 use cache::{CacheDb, HostKeyStatus};
-use cli::{WorkspaceAction, AuditAction, Cli, Commands, ConfigAction, HostsAction, KeysAction, SessionAction};
+use cli::{
+    AuditAction, Cli, Commands, ConfigAction, HostsAction, KeysAction, SessionAction,
+    WorkspaceAction,
+};
 use config::{AppConfig, TofuPolicy};
 use diagnostics::DiagnosticsEngine;
 use event::{AppEvent, EventHandler};
@@ -470,7 +473,12 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
                             .collect(),
                     };
                     let path = ws.save_in(&dir)?;
-                    println!("Saved {} ({} sessions) to {}", name, ws.sessions.len(), path.display());
+                    println!(
+                        "Saved {} ({} sessions) to {}",
+                        name,
+                        ws.sessions.len(),
+                        path.display()
+                    );
                     if on_connect.is_none() {
                         println!();
                         println!(
@@ -532,7 +540,12 @@ async fn run_command(cmd: Commands, config: AppConfig) -> anyhow::Result<()> {
                 println!("{} reachable", t.alias);
                 println!();
                 for r in &d.rungs {
-                    println!("{:<10} {}  {}", r.label, r.status.symbol(), r.status.detail());
+                    println!(
+                        "{:<10} {}  {}",
+                        r.label,
+                        r.status.symbol(),
+                        r.status.detail()
+                    );
                 }
             } else {
                 print!("{}", d);
@@ -837,10 +850,7 @@ async fn run_tui(config: AppConfig) -> anyhow::Result<()> {
 }
 
 /// `essh workspace open <name>` — restore a saved set of sessions.
-async fn run_tui_with_workspace(
-    config: AppConfig,
-    ws: workspace::Workspace,
-) -> anyhow::Result<()> {
+async fn run_tui_with_workspace(config: AppConfig, ws: workspace::Workspace) -> anyhow::Result<()> {
     run_tui_inner(config, Some(ws)).await
 }
 
@@ -1080,10 +1090,7 @@ async fn tui_main_loop(
                                 );
                             }
                         } else {
-                            app.set_status(format!(
-                                "restoring {} — {} of {}",
-                                name, done, total
-                            ));
+                            app.set_status(format!("restoring {} — {} of {}", name, done, total));
                         }
                     }
                 }
@@ -1269,8 +1276,7 @@ async fn tui_main_loop(
                                                 loss_pct: Some(d.packet_loss_pct),
                                             })
                                             .unwrap_or_default();
-                                        app.hud
-                                            .on_change(tui::hud::Reason::Diverged(text), vitals);
+                                        app.hud.on_change(tui::hud::Reason::Diverged(text), vitals);
                                     }
                                 }
                             }
@@ -1511,9 +1517,7 @@ async fn handle_key_event(
             KeyCode::Down | KeyCode::Char('j') => {
                 app.help_scroll = app.help_scroll.saturating_add(1)
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                app.help_scroll = app.help_scroll.saturating_sub(1)
-            }
+            KeyCode::Up | KeyCode::Char('k') => app.help_scroll = app.help_scroll.saturating_sub(1),
             KeyCode::PageDown => app.help_scroll = app.help_scroll.saturating_add(10),
             KeyCode::PageUp => app.help_scroll = app.help_scroll.saturating_sub(10),
             KeyCode::Home => app.help_scroll = 0,
@@ -2565,10 +2569,7 @@ async fn handle_dashboard_key(
         // 'D' opens the divergence overlay for the selected host. Upper-case
         // so it does not collide with 'd' (delete host).
         KeyCode::Char('D')
-            if matches!(
-                app.dashboard_tab,
-                DashboardTab::Hosts | DashboardTab::Fleet
-            ) =>
+            if matches!(app.dashboard_tab, DashboardTab::Hosts | DashboardTab::Fleet) =>
         {
             app.show_divergence = !app.show_divergence;
         }
@@ -3521,7 +3522,11 @@ async fn open_session(
             };
             app.launcher.query.clear();
             refresh_launcher(app);
-            app.set_status(explain_connect_failure(&user, &host.hostname, &e.to_string()));
+            app.set_status(explain_connect_failure(
+                &user,
+                &host.hostname,
+                &e.to_string(),
+            ));
         }
     }
 
@@ -5590,8 +5595,11 @@ async fn restore_one_session(
             // record a dead session as connected. Check the session's actual
             // state instead.
             if let Some(idx) = app.session_manager.active_index {
-                if let Some(SessionState::Disconnected { reason }) =
-                    app.session_manager.sessions.get(idx).map(|s| s.state.clone())
+                if let Some(SessionState::Disconnected { reason }) = app
+                    .session_manager
+                    .sessions
+                    .get(idx)
+                    .map(|s| s.state.clone())
                 {
                     return workspace::SessionOutcome::Failed(reason);
                 }
@@ -5614,9 +5622,7 @@ async fn restore_one_session(
             // Reachable, but the session failed, so the fault is above the
             // transport — authentication, most likely.
             let raw = e.to_string();
-            workspace::SessionOutcome::Failed(
-                diagnose::classify_auth_failure(&raw, true).explain(),
-            )
+            workspace::SessionOutcome::Failed(diagnose::classify_auth_failure(&raw, true).explain())
         }
     }
 }
@@ -5704,9 +5710,9 @@ mod identity_file_auth_tests {
         let methods = auth_candidates_from_paths_with_identities(
             Some(host_key.to_str().unwrap()),
             None,
-            &[identity.clone()],
+            std::slice::from_ref(&identity),
             &[],
-            &[standard.clone()],
+            std::slice::from_ref(&standard),
             false,
         );
 
@@ -5734,7 +5740,7 @@ mod identity_file_auth_tests {
         let methods = auth_candidates_from_paths_with_identities(
             None,
             None,
-            &[identity.clone()],
+            std::slice::from_ref(&identity),
             &[],
             &[],
             false,
@@ -5771,15 +5777,15 @@ fn function_key_command(key: &crossterm::event::KeyEvent) -> Option<KeyCode> {
         return None;
     }
     Some(match key.code {
-        KeyCode::F(1) => KeyCode::Char('?'), // help
-        KeyCode::F(2) => KeyCode::Char('m'), // host monitor
-        KeyCode::F(3) => KeyCode::Char('f'), // file browser
-        KeyCode::F(4) => KeyCode::Char('p'), // port forwards
-        KeyCode::F(5) => KeyCode::Char('M'), // terminal + monitor ("mini")
-        KeyCode::F(6) => KeyCode::Char('d'), // detach to dashboard
-        KeyCode::F(7) => KeyCode::Left,      // previous session
-        KeyCode::F(8) => KeyCode::Right,     // next session
-        KeyCode::F(9) => KeyCode::Char('n'),  // new session
+        KeyCode::F(1) => KeyCode::Char('?'),      // help
+        KeyCode::F(2) => KeyCode::Char('m'),      // host monitor
+        KeyCode::F(3) => KeyCode::Char('f'),      // file browser
+        KeyCode::F(4) => KeyCode::Char('p'),      // port forwards
+        KeyCode::F(5) => KeyCode::Char('M'),      // terminal + monitor ("mini")
+        KeyCode::F(6) => KeyCode::Char('d'),      // detach to dashboard
+        KeyCode::F(7) => KeyCode::Left,           // previous session
+        KeyCode::F(8) => KeyCode::Right,          // next session
+        KeyCode::F(9) => KeyCode::Char('n'),      // new session
         KeyCode::F(10) => KeyCode::Char('\u{1}'), // command palette (sentinel)
         _ => return None,
     })
@@ -5796,18 +5802,42 @@ mod function_key_tests {
 
     #[test]
     fn the_function_keys_map_to_the_commands_the_hints_advertise() {
-        assert_eq!(function_key_command(&k(KeyCode::F(1))), Some(KeyCode::Char('?')));
-        assert_eq!(function_key_command(&k(KeyCode::F(2))), Some(KeyCode::Char('m')));
-        assert_eq!(function_key_command(&k(KeyCode::F(3))), Some(KeyCode::Char('f')));
-        assert_eq!(function_key_command(&k(KeyCode::F(4))), Some(KeyCode::Char('p')));
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(1))),
+            Some(KeyCode::Char('?'))
+        );
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(2))),
+            Some(KeyCode::Char('m'))
+        );
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(3))),
+            Some(KeyCode::Char('f'))
+        );
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(4))),
+            Some(KeyCode::Char('p'))
+        );
         // F5 is the terminal+monitor split, not the session split: the mini
         // monitor is the one people want next to a shell.
-        assert_eq!(function_key_command(&k(KeyCode::F(5))), Some(KeyCode::Char('M')));
-        assert_eq!(function_key_command(&k(KeyCode::F(6))), Some(KeyCode::Char('d')));
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(5))),
+            Some(KeyCode::Char('M'))
+        );
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(6))),
+            Some(KeyCode::Char('d'))
+        );
         // Session movement, so switching needs no prefix either.
         assert_eq!(function_key_command(&k(KeyCode::F(7))), Some(KeyCode::Left));
-        assert_eq!(function_key_command(&k(KeyCode::F(8))), Some(KeyCode::Right));
-        assert_eq!(function_key_command(&k(KeyCode::F(9))), Some(KeyCode::Char('n')));
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(8))),
+            Some(KeyCode::Right)
+        );
+        assert_eq!(
+            function_key_command(&k(KeyCode::F(9))),
+            Some(KeyCode::Char('n'))
+        );
         // F10 is the command palette; the sentinel is handled before the
         // char dispatch, so it never reaches a command handler.
         assert_eq!(
@@ -5861,7 +5891,10 @@ mod connect_failure_tests {
             "Authentication error: password rejected",
         );
         assert!(msg.contains("mattbot@192.168.0.54"), "{msg}");
-        assert!(msg.contains("username"), "the username is never mentioned: {msg}");
+        assert!(
+            msg.contains("username"),
+            "the username is never mentioned: {msg}"
+        );
     }
 
     /// A non-auth failure should say what actually happened rather than

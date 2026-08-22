@@ -78,7 +78,11 @@ fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &T
             // own colour, so a directory still reads as a directory when it
             // is the one selected.
             Style::default()
-                .fg(if entry.is_dir { theme.brand } else { theme.text_primary })
+                .fg(if entry.is_dir {
+                    theme.brand
+                } else {
+                    theme.text_primary
+                })
                 .bg(theme.selection_bg)
                 .bold()
         } else if entry.is_dir {
@@ -107,7 +111,12 @@ fn render_local_pane(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &T
             .saturating_sub(size_str.len())
             .saturating_sub(4);
         let marker = if is_selected { "▶ " } else { "  " };
-        let padded = format!("{marker}{:<width$}{}", display_name, size_str, width = name_width);
+        let padded = format!(
+            "{marker}{:<width$}{}",
+            display_name,
+            size_str,
+            width = name_width
+        );
         lines.push(Line::from(Span::styled(padded, style)));
     }
 
@@ -164,7 +173,11 @@ fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &
             // own colour, so a directory still reads as a directory when it
             // is the one selected.
             Style::default()
-                .fg(if entry.is_dir { theme.brand } else { theme.text_primary })
+                .fg(if entry.is_dir {
+                    theme.brand
+                } else {
+                    theme.text_primary
+                })
                 .bg(theme.selection_bg)
                 .bold()
         } else if entry.is_dir {
@@ -193,7 +206,12 @@ fn render_remote_pane(f: &mut Frame, area: Rect, browser: &FileBrowser, theme: &
             .saturating_sub(size_str.len())
             .saturating_sub(4);
         let marker = if is_selected { "▶ " } else { "  " };
-        let padded = format!("{marker}{:<width$}{}", display_name, size_str, width = name_width);
+        let padded = format!(
+            "{marker}{:<width$}{}",
+            display_name,
+            size_str,
+            width = name_width
+        );
         lines.push(Line::from(Span::styled(padded, style)));
     }
 
@@ -307,7 +325,8 @@ mod tests {
                 is_dir: false,
                 size: 1_234_567,
             }];
-            term.draw(|f| render(f, f.area(), &browser, &theme)).unwrap();
+            term.draw(|f| render(f, f.area(), &browser, &theme))
+                .unwrap();
         }
     }
 

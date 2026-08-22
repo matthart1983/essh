@@ -314,13 +314,9 @@ impl App {
                 continue;
             }
             // Largest set containing this host; peer_sets is already sorted.
-            let primary = self
-                .peer_sets
-                .iter()
-                .find(|s| s.hosts.contains(&host.name));
-            host.diverge_count = primary.map(|set| {
-                crate::divergence::compare(&host.name, set, &self.host_facts).score()
-            });
+            let primary = self.peer_sets.iter().find(|s| s.hosts.contains(&host.name));
+            host.diverge_count = primary
+                .map(|set| crate::divergence::compare(&host.name, set, &self.host_facts).score());
         }
     }
 
@@ -387,7 +383,10 @@ impl App {
     /// Returns `None` when the host is at consensus — silence is the correct
     /// output, and a HUD that fires for agreement is a status bar.
     pub fn divergence_headline(&self, host: &str) -> Option<String> {
-        let set = self.peer_sets.iter().find(|s| s.hosts.contains(&host.to_string()))?;
+        let set = self
+            .peer_sets
+            .iter()
+            .find(|s| s.hosts.contains(&host.to_string()))?;
         let d = crate::divergence::compare(host, set, &self.host_facts);
         let worst = d.diverging().first().copied()?;
         Some(format!(
@@ -411,7 +410,11 @@ impl App {
             .iter()
             .filter(|h| h.diverge_count.is_some_and(|n| n > 0))
             .count();
-        Some(format!("{} hosts · {} diverged", self.hosts.len(), diverged))
+        Some(format!(
+            "{} hosts · {} diverged",
+            self.hosts.len(),
+            diverged
+        ))
     }
 
     /// Peer context for a session's monitor — the medians that turn a
@@ -448,7 +451,10 @@ impl App {
     /// Divergence for the currently selected host, if it has a peer set.
     pub fn selected_divergence(&self) -> Option<crate::divergence::HostDivergence> {
         let host = self.selected_host()?;
-        let set = self.peer_sets.iter().find(|s| s.hosts.contains(&host.name))?;
+        let set = self
+            .peer_sets
+            .iter()
+            .find(|s| s.hosts.contains(&host.name))?;
         Some(crate::divergence::compare(
             &host.name,
             set,
@@ -781,7 +787,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                         .split(area);
 
                     if let Some(session) = app.session_manager.sessions.get_mut(active_idx) {
-                        session.terminal.resize(panes[0].height, panes[0].width - 1);
+                        session
+                            .terminal
+                            .resize(panes[0].height, panes[0].width.saturating_sub(1));
                     }
                     if let Some(session) = app.session_manager.sessions.get(active_idx) {
                         let term = Rect {
@@ -1234,14 +1242,16 @@ mod render_smoke {
             host("web-01", "10.0.0.1", "deploy"),
             host("mattbot", "192.168.0.54", "matt"),
         ];
-        app.session_manager.sessions.push(crate::session::Session::new(
-            "s1".into(),
-            "mattbot".into(),
-            "192.168.0.54".into(),
-            22,
-            "matt".into(),
-            1000,
-        ));
+        app.session_manager
+            .sessions
+            .push(crate::session::Session::new(
+                "s1".into(),
+                "mattbot".into(),
+                "192.168.0.54".into(),
+                22,
+                "matt".into(),
+                1000,
+            ));
         app.session_manager.active_index = Some(0);
         app
     }
@@ -1303,7 +1313,10 @@ mod render_smoke {
             screen.contains("mattbot"),
             "a session with no output showed nothing identifying it:\n{screen}"
         );
-        assert!(screen.contains("ESSH"), "no product mark on the session screen");
+        assert!(
+            screen.contains("ESSH"),
+            "no product mark on the session screen"
+        );
     }
 
     /// Every view at a usable size must actually draw something.

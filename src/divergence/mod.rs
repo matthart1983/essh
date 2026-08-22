@@ -632,7 +632,10 @@ impl GroupSummary {
     /// replaced by an actual statement.
     pub fn note(&self) -> String {
         if self.host_count == self.unprobed {
-            return format!("{} hosts, none probed — nothing to compare", self.host_count);
+            return format!(
+                "{} hosts, none probed — nothing to compare",
+                self.host_count
+            );
         }
         if self.breakers.is_empty() {
             let mut s = format!("{} / {} full consensus", self.at_consensus, self.probed());
@@ -668,10 +671,7 @@ impl GroupSummary {
 }
 
 /// Summarise every peer set for the GROUPS panel.
-pub fn summarise_groups(
-    sets: &[PeerSet],
-    all: &HashMap<String, HostFacts>,
-) -> Vec<GroupSummary> {
+pub fn summarise_groups(sets: &[PeerSet], all: &HashMap<String, HostFacts>) -> Vec<GroupSummary> {
     sets.iter()
         .map(|set| {
             let mut breakers = Vec::new();
@@ -688,8 +688,7 @@ pub fn summarise_groups(
                 if diverging.is_empty() {
                     at_consensus += 1;
                 } else {
-                    let facets: Vec<String> =
-                        diverging.iter().map(|c| c.key.label()).collect();
+                    let facets: Vec<String> = diverging.iter().map(|c| c.key.label()).collect();
                     breakers.push((host.clone(), facets));
                 }
             }
@@ -810,10 +809,13 @@ mod tests {
 
         let v = verdict_for(&d).expect("a verdict");
         eprintln!("verdict [{}]: {}", v.pattern, v.text);
-        assert!(v.text.contains(&real_kernel), "verdict must cite the peers' kernel");
+        assert!(
+            v.text.contains(&real_kernel),
+            "verdict must cite the peers' kernel"
+        );
 
         // And the group summary must name the host, not just count it.
-        let g = &summarise_groups(&[set.clone()], &all)[0];
+        let g = &summarise_groups(std::slice::from_ref(&set), &all)[0];
         eprintln!("group note: {}", g.note());
         assert_eq!(g.at_consensus, 3);
         assert_eq!(g.breakers.len(), 1);
@@ -909,7 +911,10 @@ mod tests {
         assert!((dist.min - 40.0).abs() < 1e-9);
         assert!((dist.max - 95.0).abs() < 1e-9);
         assert!((dist.percentile - 97.5).abs() < 0.1);
-        assert!(disk.is_outlier, "95% against a fleet in the 40s is an outlier");
+        assert!(
+            disk.is_outlier,
+            "95% against a fleet in the 40s is an outlier"
+        );
         // The summary carries the context that makes the number a finding.
         assert!(disk.summary().contains("median"), "{}", disk.summary());
         assert!(disk.summary().contains("p98"), "{}", disk.summary());
@@ -945,7 +950,10 @@ mod tests {
             hosts: vec!["a".into(), "b".into(), "c".into()],
         };
         let d = compare("b", &set, &all); // b = 51, the median
-        let disk = d.comparisons.iter().find(|c| c.key == FacetKey::DiskRootPct);
+        let disk = d
+            .comparisons
+            .iter()
+            .find(|c| c.key == FacetKey::DiskRootPct);
         assert!(
             disk.map(|c| c.severity).unwrap_or(0.0) < 1e-9,
             "the median host must not be flagged"
@@ -1015,11 +1023,16 @@ mod tests {
         // a and b agree; c could not read the file. c must not make them look
         // like a 2-of-3 majority.
         let d = compare("a", &set, &all);
-        assert!(d.identical.contains(&FacetKey::FileHash("/etc/nginx.conf".into())));
+        assert!(d
+            .identical
+            .contains(&FacetKey::FileHash("/etc/nginx.conf".into())));
 
         // And c itself is not "diverging" — it is unreadable, and says so.
         let dc = compare("c", &set, &all);
-        let cmp = dc.comparisons.iter().find(|x| matches!(x.key, FacetKey::FileHash(_)));
+        let cmp = dc
+            .comparisons
+            .iter()
+            .find(|x| matches!(x.key, FacetKey::FileHash(_)));
         assert!(
             cmp.map(|c| c.severity).unwrap_or(0.0) < 1e-9,
             "unreadable is not disagreement"

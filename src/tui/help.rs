@@ -360,7 +360,10 @@ mod tests {
     #[test]
     fn a_clipped_reference_shows_its_range() {
         let s = screen(80, 20, 0);
-        assert!(s.contains(" of "), "no range indicator on a clipped help:\n{s}");
+        assert!(
+            s.contains(" of "),
+            "no range indicator on a clipped help:\n{s}"
+        );
     }
 
     /// Scrolling past the end must stop at the end, not run off into blank.
@@ -373,7 +376,10 @@ mod tests {
     fn a_tall_terminal_needs_no_scrolling_and_says_so() {
         let s = screen(90, 90, 0);
         assert!(s.contains("Press ? or Esc to close"));
-        assert!(!s.contains(" of "), "range shown when nothing is clipped:\n{s}");
+        assert!(
+            !s.contains(" of "),
+            "range shown when nothing is clipped:\n{s}"
+        );
     }
 }
 

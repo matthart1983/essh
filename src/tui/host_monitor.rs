@@ -50,7 +50,6 @@ fn explanation(state: &MetricState) -> String {
 
 /// A headline box: big value, unit, sub-line with peer context, sparkline.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn headline_box(
     f: &mut Frame,
     area: Rect,
@@ -85,7 +84,10 @@ fn headline_box(
     match value {
         Some((v, unit)) => {
             lines.push(Line::from(vec![
-                Span::styled(v, Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    v,
+                    Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled(unit, Style::default().fg(d::DIM)),
             ]));
@@ -144,7 +146,10 @@ pub fn render(
     let cpu_sub = match (cpu, peers.cpu_median_pct) {
         (Some(_), Some(m)) => format!("peers median {:.0}% · load {:.2}", m, metrics.load_1m),
         (Some(_), None) if metrics.status.load.is_collected() => {
-            format!("load {:.2} {:.2} {:.2}", metrics.load_1m, metrics.load_5m, metrics.load_15m)
+            format!(
+                "load {:.2} {:.2} {:.2}",
+                metrics.load_1m, metrics.load_5m, metrics.load_15m
+            )
         }
         _ => String::new(),
     };
@@ -370,7 +375,12 @@ fn render_vs_peers(
     if let Some(cpu) = metrics.cpu_percent_opt() {
         if let Some(m) = peers.cpu_median_pct {
             let sev = ((cpu - m).abs() / 100.0).min(1.0);
-            row("cpu", format!("{:.0}%", cpu), format!("median {:.0}%", m), sev);
+            row(
+                "cpu",
+                format!("{:.0}%", cpu),
+                format!("median {:.0}%", m),
+                sev,
+            );
         }
     }
     if let Some(disk) = metrics.user_disks().first() {
@@ -458,7 +468,9 @@ fn render_processes(
         Cell::from(Line::from(d::header_cell("rss", false)).right_aligned()),
     ]);
 
-    let name_width = (inner.width as usize).saturating_sub(8 + 7 + 7 + 11).max(16);
+    let name_width = (inner.width as usize)
+        .saturating_sub(8 + 7 + 7 + 11)
+        .max(16);
     let body: Vec<Row> = procs
         .iter()
         .skip(scroll)
@@ -468,9 +480,8 @@ fn render_processes(
                 Cell::from(Line::from(p.pid.to_string()).right_aligned())
                     .style(Style::default().fg(d::FAINT)),
                 Cell::from(truncate_left(&p.name, name_width)).style(Style::default().fg(d::FG)),
-                Cell::from(Line::from(format!("{:.1}", p.cpu_pct)).right_aligned()).style(
-                    Style::default().fg(if p.cpu_pct > 2.0 { d::AMBER } else { d::FG }),
-                ),
+                Cell::from(Line::from(format!("{:.1}", p.cpu_pct)).right_aligned())
+                    .style(Style::default().fg(if p.cpu_pct > 2.0 { d::AMBER } else { d::FG })),
                 Cell::from(Line::from(format!("{:.1}", p.mem_pct)).right_aligned())
                     .style(Style::default().fg(d::DIM)),
                 Cell::from(Line::from(widgets::format_kb(p.mem_rss_kb)).right_aligned())
@@ -493,6 +504,7 @@ fn render_processes(
 ///
 /// *"the narrow pane drops to essentials: cpu, mem, the fullest mount, net,
 /// top procs. A split is not a smaller copy of the full view."*
+#[allow(clippy::too_many_arguments)]
 pub fn render_essentials(
     f: &mut Frame,
     area: Rect,
@@ -524,9 +536,7 @@ pub fn render_essentials(
     let empty = MetricHistory::new(60);
     // The mockup puts context in each box's right-hand slot rather than
     // spending a line on it: `peers 31%`, `94%`, `rtt 2.1ms`.
-    let peers_note = peers
-        .cpu_median_pct
-        .map(|m| format!("peers {:.0}%", m));
+    let peers_note = peers.cpu_median_pct.map(|m| format!("peers {:.0}%", m));
     let mem_right = metrics.mem_percent().map(|p| format!("{:.0}%", p));
     // Only when measured. The v1 monitor claimed "Excellent" against an
     // unmeasured RTT; a missing number says nothing rather than something
@@ -541,7 +551,12 @@ pub fn render_essentials(
         "",
         "cpu",
         peers_note.as_deref(),
-        cpu.map(|c| (format!("{:.1}", c), format!("% · load {:.2}", metrics.load_1m))),
+        cpu.map(|c| {
+            (
+                format!("{:.1}", c),
+                format!("% · load {:.2}", metrics.load_1m),
+            )
+        }),
         String::new(),
         &metrics.status.cpu,
         &cpu_history.unwrap_or(&empty).as_slice_vec(),
@@ -581,7 +596,8 @@ pub fn render_essentials(
     );
     match metrics.user_disks().first() {
         Some(disk) => {
-            let (fill, track) = d::meter(disk.use_pct / 100.0, inner.width.saturating_sub(6) as usize);
+            let (fill, track) =
+                d::meter(disk.use_pct / 100.0, inner.width.saturating_sub(6) as usize);
             f.render_widget(
                 Paragraph::new(vec![
                     Line::from(vec![
@@ -590,10 +606,7 @@ pub fn render_essentials(
                             Style::default().fg(d::DIM),
                         ),
                         Span::raw(" "),
-                        Span::styled(
-                            format!("{:.0}%", disk.use_pct),
-                            Style::default().fg(d::FG),
-                        ),
+                        Span::styled(format!("{:.0}%", disk.use_pct), Style::default().fg(d::FG)),
                     ]),
                     Line::from(vec![
                         Span::styled(fill, Style::default().fg(d::bounded_bad(disk.use_pct))),
@@ -642,9 +655,7 @@ pub fn render_essentials(
         // is the thing you are usually hunting when you split the view.
         let rss_w = 9usize;
         let cpu_w = 6usize;
-        let name_width = (inner.width as usize)
-            .saturating_sub(rss_w + cpu_w)
-            .max(10);
+        let name_width = (inner.width as usize).saturating_sub(rss_w + cpu_w).max(10);
         let lines: Vec<Line> = metrics
             .top_procs_cpu
             .iter()
@@ -762,7 +773,10 @@ mod essentials_tests {
     #[test]
     fn the_mini_pane_draws_its_sparklines_and_meter() {
         let s = screen(44, 34);
-        let braille = s.chars().filter(|c| ('\u{2800}'..='\u{28ff}').contains(c)).count();
+        let braille = s
+            .chars()
+            .filter(|c| ('\u{2800}'..='\u{28ff}').contains(c))
+            .count();
         assert!(
             braille > 20,
             "no sparklines in the mini pane — the boxes are too short again:\n{s}"
@@ -801,13 +815,15 @@ mod layout_dump {
     #[ignore]
     fn dump_monitor() {
         let mut term = Terminal::new(TestBackend::new(176, 27)).unwrap();
-        let mut m = HostMetrics::default();
-        m.cpu_percent = 0.1;
-        m.load_1m = 0.02;
-        m.mem_total_kb = 9_400_000;
-        m.mem_used_kb = 671_900;
-        m.net_rx_bps = 1000.0;
-        m.net_tx_bps = 3400.0;
+        let mut m = HostMetrics {
+            cpu_percent: 0.1,
+            load_1m: 0.02,
+            mem_total_kb: 9_400_000,
+            mem_used_kb: 671_900,
+            net_rx_bps: 1000.0,
+            net_tx_bps: 3400.0,
+            ..Default::default()
+        };
         for slot in [
             &mut m.status.cpu,
             &mut m.status.mem,

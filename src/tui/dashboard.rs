@@ -94,18 +94,16 @@ pub fn render(
                 render_groups_panel(f, host_chunks[1], groups, theme);
             }
         }
-        super::DashboardTab::Fleet => {
-            render_fleet_tab(
-                f,
-                chunks[1],
-                hosts,
-                sessions,
-                fleet_consensus,
-                facet_agreement,
-                verdicts,
-                theme,
-            )
-        }
+        super::DashboardTab::Fleet => render_fleet_tab(
+            f,
+            chunks[1],
+            hosts,
+            sessions,
+            fleet_consensus,
+            facet_agreement,
+            verdicts,
+            theme,
+        ),
         super::DashboardTab::Config => render_config_tab(f, chunks[1], theme),
     }
 
@@ -170,10 +168,7 @@ fn render_header(
         let on = *tab == active_tab;
         let text = format!("{} {}", n, label);
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            n.to_string(),
-            Style::default().fg(d::FAINT),
-        ));
+        spans.push(Span::styled(n.to_string(), Style::default().fg(d::FAINT)));
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
             label.to_string(),
@@ -442,10 +437,7 @@ fn render_hosts_tab(
                     Style::default().fg(d::FAINT).add_modifier(Modifier::ITALIC),
                 ),
                 Some(0) => Span::styled("—", Style::default().fg(d::FAINT)),
-                Some(n) => Span::styled(
-                    n.to_string(),
-                    Style::default().fg(d::divergence_count(n)),
-                ),
+                Some(n) => Span::styled(n.to_string(), Style::default().fg(d::divergence_count(n))),
             };
 
             // Tags as chips, whole or not at all, with a +N for the rest.
@@ -483,8 +475,7 @@ fn render_hosts_tab(
                 Cell::from(h.user.clone()).style(Style::default().fg(d::DIM)),
                 Cell::from(Line::from(diverge).right_aligned()),
                 Cell::from(Line::from(tag_spans)),
-                Cell::from(Line::from(seen).right_aligned())
-                    .style(Style::default().fg(d::FAINT)),
+                Cell::from(Line::from(seen).right_aligned()).style(Style::default().fg(d::FAINT)),
             ]);
             if is_selected {
                 row.style(Style::default().bg(d::ROW_SELECTED_BG))
@@ -505,7 +496,10 @@ fn render_hosts_tab(
         Constraint::Length(9),
     ];
 
-    f.render_widget(Table::new(rows, widths).header(header).column_spacing(2), inner);
+    f.render_widget(
+        Table::new(rows, widths).header(header).column_spacing(2),
+        inner,
+    );
 }
 
 /// The GROUPS panel — the answer to "are these machines the same?".
@@ -780,7 +774,11 @@ fn render_consensus_box(
                 let (fill, track) = d::meter(*frac, meter_w);
                 vec![
                     Span::styled(
-                        format!("{:<w$}", crate::format::truncate_right(label, label_w), w = label_w),
+                        format!(
+                            "{:<w$}",
+                            crate::format::truncate_right(label, label_w),
+                            w = label_w
+                        ),
                         // A diverging facet's name is the thing to read.
                         Style::default().fg(if *frac >= 1.0 { d::FAINT } else { d::FG }),
                     ),
@@ -808,12 +806,7 @@ fn render_consensus_box(
 }
 
 /// HOSTS BY DIVERGENCE, sorted worst first.
-fn render_fleet_table(
-    f: &mut Frame,
-    area: Rect,
-    hosts: &[super::HostDisplay],
-    theme: &Theme,
-) {
+fn render_fleet_table(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], theme: &Theme) {
     let inner = d::pane(
         f,
         area,
@@ -876,11 +869,10 @@ fn render_fleet_table(
                 Row::new(vec![
                     Cell::from(Line::from(d::dot(col))),
                     Cell::from(h.name.clone()).style(Style::default().fg(d::WHITE)),
-                    Cell::from(Line::from(Span::styled(
-                        n.to_string(),
-                        Style::default().fg(col),
-                    ))
-                    .right_aligned()),
+                    Cell::from(
+                        Line::from(Span::styled(n.to_string(), Style::default().fg(col)))
+                            .right_aligned(),
+                    ),
                     Cell::from(
                         Line::from(match h.latency_ms {
                             Some(ms) => format!("{:.0}ms", ms),
@@ -1169,7 +1161,10 @@ mod fleet_tests {
     fn a_wide_window_shows_every_facet() {
         let s = screen(160, 40, 16);
         for i in 0..16 {
-            assert!(s.contains(&format!("facet-{i:02}")), "facet-{i:02} missing:\n{s}");
+            assert!(
+                s.contains(&format!("facet-{i:02}")),
+                "facet-{i:02} missing:\n{s}"
+            );
         }
         assert!(!s.contains("more facets"), "nothing should be hidden:\n{s}");
     }
@@ -1219,7 +1214,10 @@ mod fleet_tests {
             .join("\n");
 
         assert!(screen.contains("verdict"), "no verdict panel:\n{screen}");
-        assert!(screen.contains("10.0.1.10"), "the host is not named:\n{screen}");
+        assert!(
+            screen.contains("10.0.1.10"),
+            "the host is not named:\n{screen}"
+        );
         assert!(
             screen.contains("kernel behind"),
             "the reasoning is missing:\n{screen}"
@@ -1248,7 +1246,10 @@ mod fleet_tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(!screen.contains("verdict"), "empty verdict box drawn:\n{screen}");
+        assert!(
+            !screen.contains("verdict"),
+            "empty verdict box drawn:\n{screen}"
+        );
     }
 
     /// The grid must not overrun its box into the panel below.

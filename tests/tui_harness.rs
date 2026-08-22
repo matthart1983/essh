@@ -343,7 +343,7 @@ fn the_monitor_opens_and_keeps_the_host_visible() {
 
     tui.expect("processes", Duration::from_secs(20));
     tui.expect("terminal", Duration::from_secs(5)); // the way out is shown
-    // The monitor ignores typing; scrolling is its visible response.
+                                                    // The monitor ignores typing; scrolling is its visible response.
     tui.expect_responds_to(b"\x1b[B", b"\x1b[A", Duration::from_secs(5));
     tui.quit();
 }
@@ -556,7 +556,7 @@ fn f5_opens_the_mini_monitor_beside_the_shell() {
     tui.expect("F5 mini", Duration::from_secs(25));
 
     tui.send(b"\x1b[15~"); // F5
-    // The essentials pane appears while the shell is still there.
+                           // The essentials pane appears while the shell is still there.
     tui.expect("cpu", Duration::from_secs(20));
     tui.expect_responsive(Duration::from_secs(5));
     tui.quit();
@@ -717,7 +717,11 @@ fn sessions_can_be_switched_by_number_arrow_and_tab() {
         moved = tui.text().contains("[2] web-02");
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(moved, "prefix+Right did not switch:\n{}", tail(&tui.text(), 6));
+    assert!(
+        moved,
+        "prefix+Right did not switch:\n{}",
+        tail(&tui.text(), 6)
+    );
 
     tui.send(b"\x01\t"); // prefix, then Tab — back to the last session
     let started = Instant::now();
@@ -726,7 +730,11 @@ fn sessions_can_be_switched_by_number_arrow_and_tab() {
         back = tui.text().contains("[1] web-01");
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(back, "prefix+Tab did not switch back:\n{}", tail(&tui.text(), 6));
+    assert!(
+        back,
+        "prefix+Tab did not switch back:\n{}",
+        tail(&tui.text(), 6)
+    );
     tui.quit();
 }
 
@@ -910,7 +918,14 @@ fn dump_every_command() {
         let after = tui.text();
 
         println!("\n════ {label} ════");
-        println!("changed: {}", if before == after { "NO — nothing happened" } else { "yes" });
+        println!(
+            "changed: {}",
+            if before == after {
+                "NO — nothing happened"
+            } else {
+                "yes"
+            }
+        );
         for line in after.lines() {
             let t = line.trim_end();
             if !t.is_empty() {

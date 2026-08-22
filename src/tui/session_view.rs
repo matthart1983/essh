@@ -385,7 +385,7 @@ pub fn render_footer(
             Style::default().fg(theme.text_muted),
         ));
     }
-    if keys_width + tail.chars().count() + 1 <= width {
+    if keys_width + tail.chars().count() < width {
         spans.push(Span::styled(
             tail.clone(),
             Style::default().fg(theme.text_muted),

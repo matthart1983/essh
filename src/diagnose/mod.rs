@@ -313,7 +313,10 @@ pub async fn diagnose(target: &Target, timeout: Duration) -> Diagnosis {
 
     d.push(
         "Config",
-        Status::Ok(format!("{} → {}:{}", target.alias, target.hostname, target.port)),
+        Status::Ok(format!(
+            "{} → {}:{}",
+            target.alias, target.hostname, target.port
+        )),
     );
 
     // ── Bastion first: if you cannot reach the jump host, nothing about the
@@ -366,7 +369,10 @@ pub async fn diagnose(target: &Target, timeout: Duration) -> Diagnosis {
     // ── TCP
     let label = format!("TCP:{}", target.port);
     match tcp_probe(&format!("{}:{}", target.hostname, target.port), timeout).await {
-        Ok(rtt) => d.push(&label, Status::Ok(format!("{} in {}ms", addr, rtt.as_millis()))),
+        Ok(rtt) => d.push(
+            &label,
+            Status::Ok(format!("{} in {}ms", addr, rtt.as_millis())),
+        ),
         Err(e) => {
             d.push(&label, Status::Failed(e));
             d.push("SSH", Status::NotProbed);
@@ -458,7 +464,9 @@ fn describe_io(e: &std::io::Error) -> String {
         ErrorKind::TimedOut => "timed out".to_string(),
         ErrorKind::HostUnreachable => "host unreachable".to_string(),
         ErrorKind::NetworkUnreachable => "network unreachable — check routing or VPN".to_string(),
-        ErrorKind::PermissionDenied => "permission denied — a local firewall may be blocking".to_string(),
+        ErrorKind::PermissionDenied => {
+            "permission denied — a local firewall may be blocking".to_string()
+        }
         _ => e.to_string(),
     }
 }
@@ -489,10 +497,22 @@ mod tests {
         let d = Diagnosis {
             target: "prod-db".into(),
             rungs: vec![
-                Rung { label: "DNS".into(), status: Status::Ok("10.0.0.5".into()) },
-                Rung { label: "Bastion".into(), status: Status::Ok("ok".into()) },
-                Rung { label: "TCP:22".into(), status: Status::Failed("timed out after 5s".into()) },
-                Rung { label: "SSH".into(), status: Status::NotProbed },
+                Rung {
+                    label: "DNS".into(),
+                    status: Status::Ok("10.0.0.5".into()),
+                },
+                Rung {
+                    label: "Bastion".into(),
+                    status: Status::Ok("ok".into()),
+                },
+                Rung {
+                    label: "TCP:22".into(),
+                    status: Status::Failed("timed out after 5s".into()),
+                },
+                Rung {
+                    label: "SSH".into(),
+                    status: Status::NotProbed,
+                },
             ],
         };
         assert!(!d.succeeded());
@@ -536,7 +556,11 @@ mod tests {
             true,
         );
         assert_eq!(f, AuthFailure::AlgorithmRefused("ssh-rsa".into()));
-        assert!(f.explain().contains("key itself may be fine"), "{}", f.explain());
+        assert!(
+            f.explain().contains("key itself may be fine"),
+            "{}",
+            f.explain()
+        );
     }
 
     #[test]
@@ -599,7 +623,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_literal_address_is_not_described_as_resolved() {
-        let out = resolve_host("127.0.0.1", Duration::from_secs(1)).await.unwrap();
+        let out = resolve_host("127.0.0.1", Duration::from_secs(1))
+            .await
+            .unwrap();
         assert!(out.contains("literal"), "{}", out);
     }
 
@@ -648,7 +674,11 @@ mod tests {
             alias: "prod-db".into(),
             hostname: "10.255.255.1".into(),
             port: 22,
-            bastion: Some(Bastion { alias: "jump".into(), hostname: "this-bastion-does-not-exist.invalid".into(), port: 22 }),
+            bastion: Some(Bastion {
+                alias: "jump".into(),
+                hostname: "this-bastion-does-not-exist.invalid".into(),
+                port: 22,
+            }),
             proxy_command: None,
         };
         let d = diagnose(&t, Duration::from_secs(3)).await;

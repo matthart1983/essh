@@ -221,12 +221,14 @@ pub fn search(candidates: &[Candidate], query: &str) -> Vec<Match> {
             .cmp(&a.score)
             // Stable, predictable tie-break so the list never reshuffles
             // under the cursor between keystrokes.
-            .then_with(|| match (a.candidate.last_used_secs, b.candidate.last_used_secs) {
-                (Some(x), Some(y)) => x.cmp(&y),
-                (Some(_), None) => Ordering::Less,
-                (None, Some(_)) => Ordering::Greater,
-                (None, None) => Ordering::Equal,
-            })
+            .then_with(
+                || match (a.candidate.last_used_secs, b.candidate.last_used_secs) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                },
+            )
             .then_with(|| a.candidate.alias.cmp(&b.candidate.alias))
     });
     out
@@ -283,7 +285,10 @@ mod tests {
     fn word_starts_beat_matches_buried_mid_word() {
         // With no prefix match competing, the candidate whose letters land on
         // segment boundaries wins over one where they are buried mid-word.
-        let cands = vec![c("prod-api-01", "10.0.1.10"), c("capacity-node", "10.5.0.1")];
+        let cands = vec![
+            c("prod-api-01", "10.0.1.10"),
+            c("capacity-node", "10.5.0.1"),
+        ];
         let hits = search(&cands, "pa");
         assert_eq!(hits[0].candidate.alias, "prod-api-01");
     }
@@ -312,7 +317,10 @@ mod tests {
 
     #[test]
     fn recency_breaks_ties_but_never_overrides_a_better_match() {
-        let mut cands = vec![c("prod-db", "10.0.0.5"), c("parallels-host", "192.168.64.2")];
+        let mut cands = vec![
+            c("prod-db", "10.0.0.5"),
+            c("parallels-host", "192.168.64.2"),
+        ];
         // Make the *worse* textual match extremely recent.
         cands[1].last_used_secs = Some(1);
         let hits = search(&cands, "pdb");
@@ -437,32 +445,38 @@ pub fn collect_candidates(
 
     // 1. ESSH config — highest precedence.
     for h in essh_hosts {
-        upsert(&mut out, Candidate {
-            alias: h.name.clone(),
-            hostname: h.hostname.clone(),
-            port: h.port,
-            user: h.user.clone(),
-            tags: crate::format::sorted_tags(&h.tags),
-            last_used_secs: None,
-            source: Source::EsshConfig,
-            delegated: None,
-        });
+        upsert(
+            &mut out,
+            Candidate {
+                alias: h.name.clone(),
+                hostname: h.hostname.clone(),
+                port: h.port,
+                user: h.user.clone(),
+                tags: crate::format::sorted_tags(&h.tags),
+                last_used_secs: None,
+                source: Source::EsshConfig,
+                delegated: None,
+            },
+        );
     }
 
     // 2. ~/.ssh/config.
     if let Some(cfg) = ssh_config {
         for alias in cfg.aliases() {
             let r = cfg.resolve(&alias, local_user);
-            upsert(&mut out, Candidate {
-                alias,
-                hostname: r.hostname.clone(),
-                port: r.port,
-                user: r.user.clone(),
-                tags: Vec::new(),
-                last_used_secs: None,
-                source: Source::SshConfig,
-                delegated: r.caveat_summary(),
-            });
+            upsert(
+                &mut out,
+                Candidate {
+                    alias,
+                    hostname: r.hostname.clone(),
+                    port: r.port,
+                    user: r.user.clone(),
+                    tags: Vec::new(),
+                    last_used_secs: None,
+                    source: Source::SshConfig,
+                    delegated: r.caveat_summary(),
+                },
+            );
         }
     }
 
@@ -484,16 +498,19 @@ pub fn collect_candidates(
             continue;
         }
 
-        upsert(&mut out, Candidate {
-            alias: h.hostname.clone(),
-            hostname: h.hostname.clone(),
-            port: h.port,
-            user: None,
-            tags: crate::format::sorted_tags(&h.tags),
-            last_used_secs: age,
-            source: Source::Cache,
-            delegated: None,
-        });
+        upsert(
+            &mut out,
+            Candidate {
+                alias: h.hostname.clone(),
+                hostname: h.hostname.clone(),
+                port: h.port,
+                user: None,
+                tags: crate::format::sorted_tags(&h.tags),
+                last_used_secs: age,
+                source: Source::Cache,
+                delegated: None,
+            },
+        );
     }
 
     out
@@ -603,7 +620,8 @@ mod collect_tests {
 
     #[test]
     fn everything_is_searchable_once_collected() {
-        let cfg = crate::sshconfig::SshConfig::parse_str("Host bastion\n  HostName b.example.com\n");
+        let cfg =
+            crate::sshconfig::SshConfig::parse_str("Host bastion\n  HostName b.example.com\n");
         let essh = vec![essh_host("prod-db", "10.0.0.5", 22)];
         let cands = collect_candidates(Some(&cfg), &essh, &[], "matt", now());
         assert_eq!(search(&cands, "bas")[0].candidate.alias, "bastion");

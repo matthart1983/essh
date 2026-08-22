@@ -3,8 +3,8 @@ use ratatui::{
     widgets::{Clear, Paragraph, Row, Table},
 };
 
-use crate::portfwd::PortForwardManager;
 use crate::design as d;
+use crate::portfwd::PortForwardManager;
 use crate::theme::Theme;
 
 pub fn render(

@@ -17,8 +17,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `Default` is deliberately `Pending`, not `Collected`. A freshly constructed
 /// `HostMetrics` claims nothing.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum MetricState {
     /// Not sampled yet. Normal for the first tick; not an error.
     #[default]
@@ -32,7 +31,6 @@ pub enum MetricState {
     /// retrying will not help, so the UI should say so once and stop.
     Unsupported { reason: String },
 }
-
 
 impl MetricState {
     /// True only when the associated numbers are real readings.
@@ -211,7 +209,10 @@ impl HostMetrics {
 
     /// Uptime — `None` unless collected.
     pub fn uptime_opt(&self) -> Option<u64> {
-        self.status.uptime.is_collected().then_some(self.uptime_secs)
+        self.status
+            .uptime
+            .is_collected()
+            .then_some(self.uptime_secs)
     }
 
     /// Network rates — `None` unless collected. Note that the first sample
@@ -338,7 +339,10 @@ mod tests {
         assert_eq!(st.explain().unwrap(), "uncollected · collector timed out");
         st.fail("collector timed out");
         st.fail("collector timed out");
-        assert_eq!(st.explain().unwrap(), "uncollected · collector timed out 3×");
+        assert_eq!(
+            st.explain().unwrap(),
+            "uncollected · collector timed out 3×"
+        );
     }
 
     #[test]

@@ -231,6 +231,89 @@ pub fn axis_ceiling(values: &[u64]) -> u64 {
     rung
 }
 
+// ── Widgets ──────────────────────────────────────────────────────────────
+
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Block;
+use ratatui::Frame;
+
+/// A column header cell: faint, uppercase. The `DIVERGE` column is cyan
+/// (`th.s` in the handoff) because it is the one the eye should find.
+pub fn header_cell(label: &str, emphasised: bool) -> Span<'static> {
+    Span::styled(
+        label.to_uppercase(),
+        Style::default().fg(if emphasised { CYAN } else { FAINT }),
+    )
+}
+
+/// A tag chip. `warn` marks the tag implicated in a divergence.
+pub fn chip(text: &str, warn: bool) -> Span<'static> {
+    Span::styled(
+        format!(" {} ", text),
+        Style::default().fg(if warn { AMBER } else { DIM }),
+    )
+}
+
+/// The status dot: a filled circle, coloured by state. Never-probed uses a
+/// colour that reads as "no signal" rather than as a bad reading.
+pub fn dot(color: Color) -> Span<'static> {
+    Span::styled("●", Style::default().fg(color))
+}
+
+/// A footer of `key label` pairs, cyan key and faint label, matching `.foot`.
+pub fn footer_line(pairs: &[(&str, &str)]) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (key, label)) in pairs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(Span::styled(
+            key.to_string(),
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(label.to_string(), Style::default().fg(FAINT)));
+    }
+    Line::from(spans)
+}
+
+/// A headline numeral with its unit and a sub-line, per the handoff's `big()`.
+///
+/// The sub-line is where the peer median lives: *"every headline metric
+/// carries its peer median, so 23% becomes 23% against a fleet median of
+/// 31%"*. A number alone is not a finding.
+#[allow(dead_code)] // composed inline by the monitor's headline_box
+pub fn headline<'a>(value: &'a str, unit: &'a str, sub: &'a str) -> Vec<Line<'a>> {
+    vec![
+        Line::from(vec![
+            Span::styled(
+                value,
+                Style::default().fg(WHITE).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            Span::styled(unit, Style::default().fg(DIM)),
+        ]),
+        Line::from(Span::styled(sub, Style::default().fg(FAINT))),
+    ]
+}
+
+/// An honest empty state: italic, faint, in words. Never a zero, never a
+/// dash in a laid-out column, never a stub bar.
+pub fn none_line(text: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        text.to_string(),
+        Style::default().fg(FAINT).add_modifier(Modifier::ITALIC),
+    ))
+}
+
+/// Paint a region with the design background, so the app owns its canvas
+/// rather than inheriting whatever the host terminal happens to use.
+pub fn paint_bg(f: &mut Frame, area: Rect) {
+    f.render_widget(Block::default().style(Style::default().bg(BG).fg(FG)), area);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,87 +453,4 @@ mod tests {
         // Full column = all four dots in both sub-columns.
         assert!(s.chars().all(|c| c == '⣿'), "got {}", s);
     }
-}
-
-// ── Widgets ──────────────────────────────────────────────────────────────
-
-use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Block;
-use ratatui::Frame;
-
-/// A column header cell: faint, uppercase. The `DIVERGE` column is cyan
-/// (`th.s` in the handoff) because it is the one the eye should find.
-pub fn header_cell(label: &str, emphasised: bool) -> Span<'static> {
-    Span::styled(
-        label.to_uppercase(),
-        Style::default().fg(if emphasised { CYAN } else { FAINT }),
-    )
-}
-
-/// A tag chip. `warn` marks the tag implicated in a divergence.
-pub fn chip(text: &str, warn: bool) -> Span<'static> {
-    Span::styled(
-        format!(" {} ", text),
-        Style::default().fg(if warn { AMBER } else { DIM }),
-    )
-}
-
-/// The status dot: a filled circle, coloured by state. Never-probed uses a
-/// colour that reads as "no signal" rather than as a bad reading.
-pub fn dot(color: Color) -> Span<'static> {
-    Span::styled("●", Style::default().fg(color))
-}
-
-/// A footer of `key label` pairs, cyan key and faint label, matching `.foot`.
-pub fn footer_line(pairs: &[(&str, &str)]) -> Line<'static> {
-    let mut spans = vec![Span::raw(" ")];
-    for (i, (key, label)) in pairs.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("   "));
-        }
-        spans.push(Span::styled(
-            key.to_string(),
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(label.to_string(), Style::default().fg(FAINT)));
-    }
-    Line::from(spans)
-}
-
-/// A headline numeral with its unit and a sub-line, per the handoff's `big()`.
-///
-/// The sub-line is where the peer median lives: *"every headline metric
-/// carries its peer median, so 23% becomes 23% against a fleet median of
-/// 31%"*. A number alone is not a finding.
-#[allow(dead_code)] // composed inline by the monitor's headline_box
-pub fn headline<'a>(value: &'a str, unit: &'a str, sub: &'a str) -> Vec<Line<'a>> {
-    vec![
-        Line::from(vec![
-            Span::styled(
-                value,
-                Style::default().fg(WHITE).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(unit, Style::default().fg(DIM)),
-        ]),
-        Line::from(Span::styled(sub, Style::default().fg(FAINT))),
-    ]
-}
-
-/// An honest empty state: italic, faint, in words. Never a zero, never a
-/// dash in a laid-out column, never a stub bar.
-pub fn none_line(text: &str) -> Line<'static> {
-    Line::from(Span::styled(
-        text.to_string(),
-        Style::default().fg(FAINT).add_modifier(Modifier::ITALIC),
-    ))
-}
-
-/// Paint a region with the design background, so the app owns its canvas
-/// rather than inheriting whatever the host terminal happens to use.
-pub fn paint_bg(f: &mut Frame, area: Rect) {
-    f.render_widget(Block::default().style(Style::default().bg(BG).fg(FG)), area);
 }

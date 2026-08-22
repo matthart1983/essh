@@ -117,10 +117,9 @@ impl EventHandler {
                             }
                         }
                     }
-                    Ok(Event::Resize(w, h))
-                        if tx.send(AppEvent::Resize(w, h)).is_err() => {
-                            return;
-                        }
+                    Ok(Event::Resize(w, h)) if tx.send(AppEvent::Resize(w, h)).is_err() => {
+                        return;
+                    }
                     _ => {}
                 }
             } else if tx.send(AppEvent::Tick).is_err() {
