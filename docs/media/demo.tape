@@ -90,6 +90,6 @@ Sleep 250ms
 Type "d"
 Sleep 1200ms
 Type "3"
-Sleep 2400ms
+Sleep 3600ms
 Type "q"
 Sleep 600ms
