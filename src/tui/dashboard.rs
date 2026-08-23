@@ -777,7 +777,14 @@ fn render_consensus_box(
             )));
             if c.unprobed_hosts > 0 {
                 // The distinction v1's `Offline: 8` destroyed.
-                let (n, plural) = (c.unprobed_hosts, if c.unprobed_hosts == 1 { "host has" } else { "hosts have" });
+                let (n, plural) = (
+                    c.unprobed_hosts,
+                    if c.unprobed_hosts == 1 {
+                        "host has"
+                    } else {
+                        "hosts have"
+                    },
+                );
                 lines.push(d::none_line(
                     &format!(
                         "{n} {plural} never been probed, so their facets are unknown rather than in agreement."
@@ -1391,9 +1398,11 @@ mod verdict_tests {
         assert!(out.ends_with('…'), "no mark: {out:?}");
         assert!(display_width(&out) <= 30, "overflowed: {out:?}");
         // And it should not cut mid-word when a boundary is close behind.
-        assert!(!out.trim_end_matches('…').ends_with(char::is_alphabetic)
-            || out.trim_end_matches('…').ends_with(' ')
-            || !s[..out.chars().count()].ends_with(char::is_alphabetic));
+        assert!(
+            !out.trim_end_matches('…').ends_with(char::is_alphabetic)
+                || out.trim_end_matches('…').ends_with(' ')
+                || !s[..out.chars().count()].ends_with(char::is_alphabetic)
+        );
     }
 
     #[test]
@@ -1408,6 +1417,10 @@ mod verdict_tests {
         // would overflow the box and shear every column to its right.
         assert_eq!(display_width("主機"), 4);
         let out = truncate_with_ellipsis("主機主機主機", 5);
-        assert!(display_width(&out) <= 5, "{out:?} is {} wide", display_width(&out));
+        assert!(
+            display_width(&out) <= 5,
+            "{out:?} is {} wide",
+            display_width(&out)
+        );
     }
 }
