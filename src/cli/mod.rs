@@ -4,8 +4,35 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "essh", version, about = "Enhanced SSH Client")]
 pub struct Cli {
+    /// Colour theme for this run: dark (default), terminal, light, solarized,
+    /// dracula, nord, ocean, sky.
+    ///
+    /// `terminal` pins no colours of its own — every slot resolves to an ANSI
+    /// entry and the terminal's own foreground and background show through, so
+    /// a pywal or terminal-profile setup carries into essh.
+    ///
+    /// Overrides the saved config for this run only; `t` in the TUI changes it
+    /// and persists.
+    #[arg(long, global = true, value_parser = parse_theme)]
+    pub theme: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
+}
+
+/// `theme::by_name` falls back to `dark` for anything it does not recognise,
+/// which is right at runtime and wrong at the CLI: a typo would silently render
+/// the default and look like the flag did nothing.
+fn parse_theme(raw: &str) -> Result<String, String> {
+    let resolved = crate::theme::by_name(raw);
+    let asked_for_dark = raw.eq_ignore_ascii_case("dark");
+    if resolved.name == "dark" && !asked_for_dark {
+        return Err(format!(
+            "unknown theme {raw:?} (available: {})",
+            crate::theme::THEME_NAMES.join(", ")
+        ));
+    }
+    Ok(raw.to_string())
 }
 
 #[derive(Subcommand, Debug)]

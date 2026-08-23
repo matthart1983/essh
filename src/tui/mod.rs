@@ -721,7 +721,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 // which is also what makes a session look like the rest of
                 // the program instead of a bare terminal.
                 let full = frame.area();
-                design::paint_bg(frame, full);
+                design::paint_bg(frame, full, &app.theme);
                 // Two rows top and bottom: each strip carries a border, so a
                 // single row would be entirely consumed by its rule and the
                 // text would never appear.
@@ -808,7 +808,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     frame.render_widget(
                         ratatui::widgets::Block::default()
                             .borders(ratatui::widgets::Borders::LEFT)
-                            .border_style(ratatui::style::Style::default().fg(design::RULE)),
+                            .border_style(ratatui::style::Style::default().fg(app.theme.separator)),
                         divider,
                     );
 
@@ -842,7 +842,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 }
 
                 // Transient, over the shell, never a reserved row.
-                hud::render(frame, area, &app.hud);
+                hud::render(frame, area, &app.hud, &app.theme);
             }
         }
         AppView::Monitor => {
@@ -1381,6 +1381,16 @@ mod render_smoke {
         assert!(
             screen.contains("Ctrl+A"),
             "the prefix is never named:\n{screen}"
+        );
+        // On macOS the advertised F-keys are media keys unless the user has
+        // changed a system setting — F1 is brightness, F10 is mute. A strip
+        // that names them without naming `fn` sends a Mac user to adjust their
+        // volume. The tail is dropped whole when it does not fit, so this also
+        // pins that it still fits.
+        #[cfg(target_os = "macos")]
+        assert!(
+            screen.contains("fn+F-keys"),
+            "macOS: the strip advertises F-keys without saying they need fn:\n{screen}"
         );
     }
 

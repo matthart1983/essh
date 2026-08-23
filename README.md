@@ -66,13 +66,21 @@ so `Ctrl+D` still means EOF and `Ctrl+C` still interrupts.
 | `F5` mini monitor | `F6` detach | `F7`/`F8` prev/next session | `F9` new session |
 | `F10` command menu | | | |
 
+**On macOS**, that row is brightness and volume out of the box — `F10` mutes.
+Either hold `fn` with them, or turn on *System Settings → Keyboard → Use F1, F2,
+etc. as standard function keys* once. The prefix route below needs neither and
+works everywhere.
+
 For anything else, press `Ctrl+A`, let go, then the key — `s` split, `w` close,
 `t` theme, `1`–`9` jump to session, `[`/`]` resize. The strip along the bottom
 of a session lists the keys that apply right now, so there is nothing to
 memorise. Change the prefix with `prefix_key` under `[session]`.
 
-`Option`/`Alt` combinations also work when your terminal sends them as Meta,
-but function keys need no configuration and behave the same on both platforms.
+`Option`/`Alt` combinations work on the dashboard and the other screens, but
+**not while a shell has focus** — there essh claims exactly one key, the prefix,
+and forwards everything else, so `Alt+f` stays readline's forward-word and
+`Alt+.` stays yank-last-argument. In a session it is function keys or the
+prefix.
 
 ## What it does
 
@@ -103,6 +111,29 @@ and scores every host against the group's consensus:
 The Fleet screen names the outlier and the facets behind the claim, so the
 verdict is checkable rather than asserted. Facts it cannot collect are
 reported as uncollected — never as agreement.
+
+## Themes
+
+Eight, cycled with `t` (and `Alt+t` inside a session, where `t` belongs to the
+shell), persisted to the config:
+
+**dark** (default) · **terminal** · **light** · **solarized** · **dracula** · **nord** · **ocean** · **sky**
+
+`terminal` pins no colours of its own — every slot resolves to an ANSI entry and
+foreground and background use your terminal's own, so pywal, matugen or a
+terminal profile carries straight through. `sky` and `light` paint their own
+ground; `ocean` uses your terminal's with a fixed palette on top.
+
+Or jump straight to one from the command menu — `F10`, or `Ctrl+P` outside a
+session — and type its name.
+
+```bash
+essh --theme terminal        # also accepts: system, ansi
+essh --theme dracula hosts list
+```
+
+The flag applies for one run and is not written back, so it's a way to try one
+without committing. `t` in the TUI changes it and saves.
 
 ## Configuration
 

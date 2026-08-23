@@ -21,7 +21,7 @@ use ratatui::{
     widgets::{Block, Paragraph},
 };
 
-use crate::design as d;
+use crate::theme::Theme;
 
 /// How long a HUD stays up before fading. The handoff says ~4s.
 const LIFETIME: Duration = Duration::from_secs(4);
@@ -39,11 +39,11 @@ pub enum Reason {
 }
 
 impl Reason {
-    fn glyph(&self) -> (&'static str, Color) {
+    fn glyph(&self, theme: &Theme) -> (&'static str, Color) {
         match self {
-            Reason::Diverged(_) => ("▲", d::AMBER),
-            Reason::Link(_) => ("◆", d::CYAN),
-            Reason::Notice(_) => ("·", d::DIM),
+            Reason::Diverged(_) => ("▲", theme.status_warn),
+            Reason::Link(_) => ("◆", theme.brand),
+            Reason::Notice(_) => ("·", theme.text_secondary),
         }
     }
 
@@ -130,7 +130,7 @@ impl HudState {
 }
 
 /// Draw the HUD over the bottom of `area`, without reserving any of it.
-pub fn render(f: &mut Frame, area: Rect, state: &HudState) {
+pub fn render(f: &mut Frame, area: Rect, state: &HudState, theme: &Theme) {
     let Some(hud) = &state.current else {
         return;
     };
@@ -148,14 +148,20 @@ pub fn render(f: &mut Frame, area: Rect, state: &HudState) {
     // Composite by painting the strip, since a terminal has no alpha. The
     // point of "alpha-blends over the shell" is that the shell does not
     // reflow — which holds, because these rows were never taken from it.
-    f.render_widget(Block::default().style(Style::default().bg(d::RULE)), row);
+    f.render_widget(
+        Block::default().style(Style::default().bg(theme.separator)),
+        row,
+    );
 
-    let (glyph, glyph_color) = hud.reason.glyph();
+    let (glyph, glyph_color) = hud.reason.glyph(theme);
     let mut spans = vec![
         Span::raw(" "),
         Span::styled(glyph, Style::default().fg(glyph_color)),
         Span::raw(" "),
-        Span::styled(hud.reason.text().to_string(), Style::default().fg(d::FG)),
+        Span::styled(
+            hud.reason.text().to_string(),
+            Style::default().fg(theme.text_primary),
+        ),
     ];
 
     // The right-hand vitals, each omitted when unmeasured. v1 printed
@@ -163,30 +169,43 @@ pub fn render(f: &mut Frame, area: Rect, state: &HudState) {
     // should say nothing.
     let mut right: Vec<Span> = Vec::new();
     if let Some(rtt) = hud.vitals.rtt_ms {
-        right.push(Span::styled("rtt ", Style::default().fg(d::DIM)));
+        right.push(Span::styled(
+            "rtt ",
+            Style::default().fg(theme.text_secondary),
+        ));
         right.push(Span::styled(
             format!("{:.1}ms", rtt),
-            Style::default().fg(d::FG),
+            Style::default().fg(theme.text_primary),
         ));
         right.push(Span::raw("   "));
     }
     if let Some(bps) = hud.vitals.down_bps {
-        right.push(Span::styled("↓ ", Style::default().fg(d::DIM)));
+        right.push(Span::styled(
+            "↓ ",
+            Style::default().fg(theme.text_secondary),
+        ));
         right.push(Span::styled(
             crate::tui::widgets::format_bytes_rate(bps),
-            Style::default().fg(d::FG),
+            Style::default().fg(theme.text_primary),
         ));
         right.push(Span::raw("   "));
     }
     if let Some(loss) = hud.vitals.loss_pct {
-        right.push(Span::styled("loss ", Style::default().fg(d::DIM)));
+        right.push(Span::styled(
+            "loss ",
+            Style::default().fg(theme.text_secondary),
+        ));
         right.push(Span::styled(
             format!("{:.1}%", loss),
-            Style::default().fg(if loss > 0.0 { d::AMBER } else { d::GREEN }),
+            Style::default().fg(if loss > 0.0 {
+                theme.status_warn
+            } else {
+                theme.status_good
+            }),
         ));
         right.push(Span::raw("   "));
     }
-    right.push(Span::styled("⌘D detail", Style::default().fg(d::CYAN)));
+    right.push(Span::styled("⌘D detail", Style::default().fg(theme.brand)));
     right.push(Span::raw(" "));
 
     let left_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();

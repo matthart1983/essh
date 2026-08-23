@@ -118,37 +118,6 @@ pub fn ramp_at(ramp: &[Color], f: f64) -> Color {
     }
 }
 
-/// Colour for a magnitude — CPU, memory, network. Cool → bright.
-pub fn magnitude(pct: f64) -> Color {
-    ramp_at(&RAMP_OK, pct / 100.0)
-}
-
-/// Colour for a value that is genuinely bounded-bad: disk fullness, cert
-/// expiry. Green → amber → red, and **sampled by position along the bar** so
-/// the far end is already red before the value reaches it.
-pub fn bounded_bad(pct: f64) -> Color {
-    match pct {
-        p if p >= 90.0 => RED,
-        p if p >= 80.0 => AMBER,
-        _ => GREEN_MUTED,
-    }
-}
-
-/// Colour for a divergence severity in 0.0–1.0.
-pub fn divergence(severity: f64) -> Color {
-    ramp_at(&RAMP_DIV, severity)
-}
-
-/// Colour for a count of diverging facets, normalised against 3 — the point
-/// at which the handoff's own sample fleet reaches full red.
-pub fn divergence_count(n: usize) -> Color {
-    if n == 0 {
-        FAINT
-    } else {
-        ramp_at(&RAMP_DIV, (n as f64 / 3.0).min(1.0))
-    }
-}
-
 // ── Meters ───────────────────────────────────────────────────────────────
 
 /// A filled meter, matching `.mtr` — a solid bar on a faint track.
@@ -241,18 +210,22 @@ use ratatui::Frame;
 
 /// A column header cell: faint, uppercase. The `DIVERGE` column is cyan
 /// (`th.s` in the handoff) because it is the one the eye should find.
-pub fn header_cell(label: &str, emphasised: bool) -> Span<'static> {
+pub fn header_cell(label: &str, emphasised: bool, t: &crate::theme::Theme) -> Span<'static> {
     Span::styled(
         label.to_uppercase(),
-        Style::default().fg(if emphasised { CYAN } else { FAINT }),
+        Style::default().fg(if emphasised { t.brand } else { t.border }),
     )
 }
 
 /// A tag chip. `warn` marks the tag implicated in a divergence.
-pub fn chip(text: &str, warn: bool) -> Span<'static> {
+pub fn chip(text: &str, warn: bool, t: &crate::theme::Theme) -> Span<'static> {
     Span::styled(
         format!(" {} ", text),
-        Style::default().fg(if warn { AMBER } else { DIM }),
+        Style::default().fg(if warn {
+            t.status_warn
+        } else {
+            t.text_secondary
+        }),
     )
 }
 
@@ -263,7 +236,7 @@ pub fn dot(color: Color) -> Span<'static> {
 }
 
 /// A footer of `key label` pairs, cyan key and faint label, matching `.foot`.
-pub fn footer_line(pairs: &[(&str, &str)]) -> Line<'static> {
+pub fn footer_line(pairs: &[(&str, &str)], t: &crate::theme::Theme) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (i, (key, label)) in pairs.iter().enumerate() {
         if i > 0 {
@@ -271,10 +244,13 @@ pub fn footer_line(pairs: &[(&str, &str)]) -> Line<'static> {
         }
         spans.push(Span::styled(
             key.to_string(),
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            Style::default().fg(t.key_hint).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(label.to_string(), Style::default().fg(FAINT)));
+        spans.push(Span::styled(
+            label.to_string(),
+            Style::default().fg(t.border),
+        ));
     }
     Line::from(spans)
 }
@@ -285,33 +261,49 @@ pub fn footer_line(pairs: &[(&str, &str)]) -> Line<'static> {
 /// carries its peer median, so 23% becomes 23% against a fleet median of
 /// 31%"*. A number alone is not a finding.
 #[allow(dead_code)] // composed inline by the monitor's headline_box
-pub fn headline<'a>(value: &'a str, unit: &'a str, sub: &'a str) -> Vec<Line<'a>> {
+pub fn headline<'a>(
+    value: &'a str,
+    unit: &'a str,
+    sub: &'a str,
+    t: &crate::theme::Theme,
+) -> Vec<Line<'a>> {
     vec![
         Line::from(vec![
             Span::styled(
                 value,
-                Style::default().fg(WHITE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(t.text_emphasis)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
-            Span::styled(unit, Style::default().fg(DIM)),
+            Span::styled(unit, Style::default().fg(t.text_secondary)),
         ]),
-        Line::from(Span::styled(sub, Style::default().fg(FAINT))),
+        Line::from(Span::styled(sub, Style::default().fg(t.border))),
     ]
 }
 
 /// An honest empty state: italic, faint, in words. Never a zero, never a
 /// dash in a laid-out column, never a stub bar.
-pub fn none_line(text: &str) -> Line<'static> {
+pub fn none_line(text: &str, t: &crate::theme::Theme) -> Line<'static> {
     Line::from(Span::styled(
         text.to_string(),
-        Style::default().fg(FAINT).add_modifier(Modifier::ITALIC),
+        Style::default().fg(t.border).add_modifier(Modifier::ITALIC),
     ))
 }
 
 /// Paint a region with the design background, so the app owns its canvas
 /// rather than inheriting whatever the host terminal happens to use.
-pub fn paint_bg(f: &mut Frame, area: Rect) {
-    f.render_widget(Block::default().style(Style::default().bg(BG).fg(FG)), area);
+/// Fill a region with the theme's own ground.
+///
+/// This used to hardcode the 2.0 palette's `BG`/`FG`, which is why a light
+/// theme could not work: its near-black text landed on a painted dark panel.
+/// A theme that wants the terminal's background leaves `bg` as `Color::Reset`,
+/// which paints nothing.
+pub fn paint_bg(f: &mut Frame, area: Rect, theme: &crate::theme::Theme) {
+    f.render_widget(
+        Block::default().style(Style::default().bg(theme.bg).fg(theme.text_primary)),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -332,55 +324,6 @@ mod tests {
         assert_eq!(AMBER, Color::Rgb(0xf0, 0xc0, 0x60));
         assert_eq!(RED, Color::Rgb(0xff, 0x78, 0x78));
         assert_eq!(VIOLET, Color::Rgb(0xb8, 0xa8, 0xe8));
-    }
-
-    #[test]
-    fn divergence_ramp_runs_faint_to_red() {
-        // Consensus is quiet; being alone is red.
-        assert_eq!(divergence(0.0), RAMP_DIV[0]);
-        assert_eq!(divergence(1.0), RED);
-        // "The further from consensus, the hotter" — so warmth climbs
-        // monotonically. Total brightness does not, and should not be the
-        // measure: amber is a brighter colour than red but reads cooler.
-        let mut last_red = -1i32;
-        for i in 0..=10 {
-            let (r, _, _) = channels(divergence(i as f64 / 10.0));
-            assert!(r as i32 >= last_red, "warmth dipped at {}", i);
-            last_red = r as i32;
-        }
-        // And the cool end really is cool.
-        let (r0, _, b0) = channels(divergence(0.0));
-        assert!(b0 > r0, "consensus should not read warm");
-    }
-
-    #[test]
-    fn magnitude_never_reddens() {
-        // The rule this exists to enforce: a busy machine is a working
-        // machine, so no magnitude ever renders as an alarm.
-        for pct in [0.0, 25.0, 50.0, 75.0, 95.0, 100.0] {
-            let c = magnitude(pct);
-            assert_ne!(c, RED, "magnitude at {}% went red", pct);
-            assert_ne!(c, AMBER, "magnitude at {}% went amber", pct);
-        }
-        // And it gets brighter, not darker, as the value climbs.
-        let (_, g_low, _) = channels(magnitude(10.0));
-        let (_, g_high, _) = channels(magnitude(90.0));
-        assert!(g_high > g_low);
-    }
-
-    #[test]
-    fn bounded_bad_is_reserved_for_values_that_really_are_bad() {
-        assert_eq!(bounded_bad(42.0), GREEN_MUTED);
-        assert_eq!(bounded_bad(84.0), AMBER);
-        assert_eq!(bounded_bad(93.0), RED);
-    }
-
-    #[test]
-    fn a_diverge_count_of_zero_is_faint_not_green() {
-        // Agreement should be quiet, not celebrated.
-        assert_eq!(divergence_count(0), FAINT);
-        assert_eq!(divergence_count(3), RED);
-        assert_ne!(divergence_count(1), divergence_count(2));
     }
 
     #[test]

@@ -281,7 +281,6 @@ pub fn render_footer(
     sessions: usize,
     theme: &Theme,
 ) {
-    use crate::design as d;
     use crate::tui::prefix_hint;
 
     // A message takes the row while it is fresh. Commands that decline to do
@@ -365,7 +364,18 @@ pub fn render_footer(
     }
     keys.push(("F6", "detach"));
 
-    let tail = format!("· {} for more", prefix_hint(prefix, ""));
+    // On a stock Mac the whole F-key row above is media keys: F1 is
+    // brightness, F10 is mute. A user pressing what this strip advertises
+    // changes their volume and nothing else, which makes the strip worse than
+    // no strip. Name the modifier that makes them work, and name the prefix
+    // route that needs no system setting at all.
+    let tail = if cfg!(target_os = "macos") {
+        // Kept short deliberately: the strip drops the tail whole when it does
+        // not fit, so a longer, friendlier sentence means no hint at all.
+        format!("· fn+F-keys · {} more", prefix_hint(prefix, ""))
+    } else {
+        format!("· {} for more", prefix_hint(prefix, ""))
+    };
 
     let width = area.width as usize;
     let keys_width: usize = keys
@@ -391,7 +401,7 @@ pub fn render_footer(
             Style::default().fg(theme.text_muted),
         ));
     }
-    let _ = d::FAINT;
+    let _ = theme.border;
 
     let footer = Paragraph::new(Line::from(spans)).block(
         Block::default()
@@ -408,7 +418,6 @@ pub fn render_footer(
 /// focus is shown by a one-column cyan bar on its left edge, which costs no
 /// row and no title.
 pub fn render_pane(f: &mut Frame, area: Rect, session: &Session, focused: bool, theme: &Theme) {
-    let _ = theme;
     if area.width < 2 {
         return;
     }
@@ -420,9 +429,9 @@ pub fn render_pane(f: &mut Frame, area: Rect, session: &Session, focused: bool, 
         height: area.height,
     };
     let color = if focused {
-        crate::design::CYAN
+        theme.brand
     } else {
-        crate::design::RULE
+        theme.separator
     };
     f.render_widget(
         Paragraph::new(

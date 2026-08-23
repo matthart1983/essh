@@ -123,7 +123,13 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     AppConfig::ensure_dirs()?;
-    let app_config = AppConfig::load()?;
+    let mut app_config = AppConfig::load()?;
+
+    // A flag beats the saved config, for this run only — nothing is written
+    // back, so `--theme` is a way to try one without committing to it.
+    if let Some(theme) = cli.theme {
+        app_config.theme = theme;
+    }
 
     match cli.command {
         None => run_tui(app_config).await,
@@ -1481,15 +1487,24 @@ async fn handle_key_event(
         return handle_palette_key(key, app, config, audit, runtimes, output_rxs).await;
     }
 
-    // Ctrl+P opens the palette only where no shell is listening. In a session
-    // it belongs to readline (previous history), and the hint strip promises
-    // that every key we do not name goes to the shell. F10 is the binding
-    // that works everywhere.
+    // Ctrl+P opens the palette, but not everywhere.
+    //
+    // In a session it belongs to readline (previous history), and the hint
+    // strip promises that every key we do not name goes to the shell.
+    //
+    // On the launcher it belongs to the list. That screen is a fuzzy picker
+    // and binds Ctrl+P / Ctrl+N to move the selection, the way fzf and every
+    // emacs-shaped picker does — but this check ran first, so only Ctrl+N ever
+    // worked. Down moved, up opened a menu. The launcher's own binding was
+    // dead code that read as if it worked.
+    //
+    // F10 and the prefix reach the palette from both.
     if key.code == KeyCode::Char('p')
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && !shell_has_focus(app)
+        && app.view != AppView::Launcher
     {
-        open_command_palette(app);
+        open_command_palette(app, &config.theme);
         return Ok(KeyAction::Handled);
     }
 
@@ -1573,7 +1588,7 @@ async fn handle_key_event(
     let mut from_function_key = false;
     if let Some(code) = function_key_command(&key) {
         if code == KeyCode::Char('\u{1}') {
-            open_command_palette(app);
+            open_command_palette(app, &config.theme);
             return Ok(KeyAction::Handled);
         }
         if code == KeyCode::Char('?') {
@@ -1726,7 +1741,7 @@ async fn handle_key_event(
             // The handoff binds it to ⌘K; `k` keeps that shape for anyone
             // whose terminal swallows function keys.
             KeyCode::Char('k') => {
-                open_command_palette(app);
+                open_command_palette(app, &config.theme);
                 return Ok(KeyAction::Handled);
             }
             // Open the launcher again to start another session.
@@ -2403,6 +2418,7 @@ async fn handle_palette_key(
                 &app.hosts,
                 &app.session_manager.sessions,
                 app.session_manager.has_sessions(),
+                &config.theme,
             );
         }
         KeyCode::Enter => {
@@ -2442,6 +2458,9 @@ async fn handle_palette_key(
                     PaletteAction::ToggleHelp => {
                         app.show_help = !app.show_help;
                     }
+                    PaletteAction::SetTheme(name) => {
+                        set_theme(app, config, name);
+                    }
                 }
             } else {
                 app.command_palette = None;
@@ -2453,6 +2472,7 @@ async fn handle_palette_key(
                 &app.hosts,
                 &app.session_manager.sessions,
                 app.session_manager.has_sessions(),
+                &config.theme,
             );
         }
         _ => {}
@@ -2704,6 +2724,12 @@ fn has_meta_modifier(modifiers: KeyModifiers) -> bool {
 /// When it does, ESSH takes only its prefix key and forwards everything else.
 /// In the dashboard, monitor and browsers there is no shell to steal from, so
 /// the direct Alt bindings stay — they cost nothing there.
+///
+/// This is what keeps single-letter bindings from eating input. `t` cycles the
+/// theme on every non-session screen; with a shell focused it is a letter the
+/// user is typing, so the theme binding there is `Alt+t` (`†` on macOS) and
+/// plain `t` passes straight through — the same reasoning as `?`, which opens
+/// help everywhere except in a session.
 fn shell_has_focus(app: &App) -> bool {
     app.view == AppView::Session && app.session_manager.has_sessions()
 }
@@ -2759,14 +2785,20 @@ fn alt_session_switch_index(code: &KeyCode) -> Option<usize> {
 }
 
 fn cycle_theme(app: &mut App, config: &mut AppConfig) {
-    let next = theme::next_theme_name(&config.theme).to_string();
-    config.theme = next.clone();
-    app.theme = theme::by_name(&next);
+    let next = theme::next_theme_name(&config.theme);
+    set_theme(app, config, next);
+}
+
+/// Apply a theme and persist it. Shared by `t` and the palette, so the two
+/// cannot drift into applying it differently.
+fn set_theme(app: &mut App, config: &mut AppConfig, name: &str) {
+    config.theme = name.to_string();
+    app.theme = theme::by_name(name);
 
     if let Err(err) = config.save() {
-        app.set_status(format!("Theme: {} (not saved: {})", next, err));
+        app.set_status(format!("Theme: {} (not saved: {})", name, err));
     } else {
-        app.set_status(format!("Theme: {}", next));
+        app.set_status(format!("Theme: {}", name));
     }
 }
 
@@ -3580,12 +3612,13 @@ fn explain_connect_failure(user: &str, hostname: &str, err: &str) -> String {
 }
 
 /// Open the command palette, populated with the current hosts and sessions.
-fn open_command_palette(app: &mut App) {
+fn open_command_palette(app: &mut App, active_theme: &str) {
     let mut palette = tui::command_palette::CommandPalette::new();
     palette.update(
         &app.hosts,
         &app.session_manager.sessions,
         app.session_manager.has_sessions(),
+        active_theme,
     );
     app.command_palette = Some(palette);
 }
@@ -5932,5 +5965,58 @@ mod connect_failure_tests {
         let msg = explain_connect_failure("matt", "10.0.0.9", "Connection refused");
         assert!(msg.contains("Connection refused"), "{msg}");
         assert!(!msg.contains("username"), "{msg}");
+    }
+}
+
+#[cfg(test)]
+mod ctrl_p_routing {
+    //! Ctrl+P is claimed twice, and only one of them can win.
+    //!
+    //! The global binding opens the command palette whenever no shell has
+    //! focus. The launcher also binds it, to move the selection up in the
+    //! emacs style, next to its `Ctrl+N` for down. The global check runs
+    //! first, so the launcher's never fires: `Ctrl+N` moves down and `Ctrl+P`
+    //! opens the palette, which is the kind of asymmetry a user reads as a
+    //! bug because it is one.
+
+    /// The global check runs first, so it is the one that has to exclude the
+    /// launcher. If that guard is ever dropped, the launcher's Ctrl+P silently
+    /// goes back to being dead code.
+    #[test]
+    fn the_launcher_is_excluded_from_the_global_binding() {
+        let src = include_str!("main.rs");
+        let global = src
+            .find("if key.code == KeyCode::Char('p')")
+            .expect("global Ctrl+P binding");
+        let dispatch = src
+            .find("AppView::Launcher => handle_launcher_key")
+            .expect("view dispatch");
+        assert!(global < dispatch, "the global binding no longer runs first");
+
+        let guard = &src[global..global + 400];
+        assert!(
+            guard.contains("app.view != AppView::Launcher"),
+            "the global Ctrl+P no longer excludes the launcher, so the \
+             launcher's own Ctrl+P is unreachable again"
+        );
+    }
+
+    /// Up and down must be the same kind of key. `Ctrl+N` moving the selection
+    /// while `Ctrl+P` opened a menu was the symptom that exposed the shadowing.
+    #[test]
+    fn the_launcher_binds_both_halves_of_the_emacs_pair() {
+        let src = include_str!("main.rs");
+        let handler = src
+            .find("fn handle_launcher_key")
+            .expect("launcher handler");
+        let body = &src[handler..handler + 3000];
+        for (key, dir) in [("'p'", "prev"), ("'n'", "next")] {
+            assert!(
+                body.contains(&format!(
+                    "KeyCode::Char({key}) if key.modifiers.contains(KeyModifiers::CONTROL)"
+                )),
+                "the launcher no longer binds Ctrl+{key} for {dir}"
+            );
+        }
     }
 }

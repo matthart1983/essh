@@ -52,7 +52,7 @@ pub fn render(
         ])
         .split(area);
 
-    d::paint_bg(f, area);
+    d::paint_bg(f, area, theme);
     render_header(f, chunks[0], active_tab, peer_note, theme);
 
     match active_tab {
@@ -128,7 +128,7 @@ fn render_header(
     area: Rect,
     active_tab: super::DashboardTab,
     peer_note: Option<String>,
-    _theme: &Theme,
+    theme: &Theme,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -141,7 +141,7 @@ fn render_header(
     let left_pad = (rows[0].width as usize / 2).saturating_sub(title.len() / 2);
     let mut bar = vec![
         Span::raw(" ".repeat(left_pad)),
-        Span::styled(title, Style::default().fg(d::DIM)),
+        Span::styled(title, Style::default().fg(theme.text_secondary)),
     ];
     if !right.is_empty() {
         let used = left_pad + title.len();
@@ -149,9 +149,9 @@ fn render_header(
             .saturating_sub(used + right.chars().count() + 3)
             .max(1);
         bar.push(Span::raw(" ".repeat(pad)));
-        bar.push(d::dot(d::AMBER));
+        bar.push(d::dot(theme.status_warn));
         bar.push(Span::raw(" "));
-        bar.push(Span::styled(right, Style::default().fg(d::FAINT)));
+        bar.push(Span::styled(right, Style::default().fg(theme.border)));
     }
     f.render_widget(Paragraph::new(Line::from(bar)), rows[0]);
 
@@ -168,14 +168,19 @@ fn render_header(
         let on = *tab == active_tab;
         let text = format!("{} {}", n, label);
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(n.to_string(), Style::default().fg(d::FAINT)));
+        spans.push(Span::styled(
+            n.to_string(),
+            Style::default().fg(theme.border),
+        ));
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
             label.to_string(),
             if on {
-                Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.text_emphasis)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(d::DIM)
+                Style::default().fg(theme.text_secondary)
             },
         ));
         spans.push(Span::raw(" "));
@@ -185,7 +190,7 @@ fn render_header(
             } else {
                 " ".repeat(text.chars().count() + 2)
             },
-            Style::default().fg(d::CYAN),
+            Style::default().fg(theme.brand),
         ));
     }
     let now = chrono::Local::now().format("%H:%M:%S").to_string();
@@ -194,7 +199,7 @@ fn render_header(
         .saturating_sub(used + now.len() + 2)
         .max(1);
     spans.push(Span::raw(" ".repeat(pad)));
-    spans.push(Span::styled(now, Style::default().fg(d::FAINT)));
+    spans.push(Span::styled(now, Style::default().fg(theme.border)));
 
     f.render_widget(
         Paragraph::new(vec![Line::from(spans), Line::from(underline)]),
@@ -344,7 +349,9 @@ fn render_verdict_box(
                 verdicts.len(),
                 total_hosts
             ),
-            Style::default().fg(d::FG).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD),
         )));
     }
 
@@ -352,16 +359,18 @@ fn render_verdict_box(
         let mut spans = vec![
             Span::styled(
                 format!("{host}  "),
-                Style::default().fg(d::CYAN).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.brand)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(v.text.clone(), Style::default().fg(d::FG)),
+            Span::styled(v.text.clone(), Style::default().fg(theme.text_primary)),
         ];
         if !v.evidence.is_empty() {
             // The evidence keeps the sentence checkable.
             let facets: Vec<String> = v.evidence.iter().map(|e| e.label().to_string()).collect();
             spans.push(Span::styled(
                 format!("  [{}]", facets.join(", ")),
-                Style::default().fg(d::FAINT),
+                Style::default().fg(theme.border),
             ));
         }
         lines.push(Line::from(spans));
@@ -406,13 +415,13 @@ fn render_hosts_tab(
     // DIVERGE is the column the eye should find, so its header is cyan.
     let header = Row::new(vec![
         Cell::from(""),
-        Cell::from(d::header_cell("name", false)),
-        Cell::from(d::header_cell("hostname", false)),
-        Cell::from(Line::from(d::header_cell("port", false)).right_aligned()),
-        Cell::from(d::header_cell("user", false)),
-        Cell::from(Line::from(d::header_cell("diverge ↓", true)).right_aligned()),
-        Cell::from(d::header_cell("tags", false)),
-        Cell::from(Line::from(d::header_cell("seen", false)).right_aligned()),
+        Cell::from(d::header_cell("name", false, theme)),
+        Cell::from(d::header_cell("hostname", false, theme)),
+        Cell::from(Line::from(d::header_cell("port", false, theme)).right_aligned()),
+        Cell::from(d::header_cell("user", false, theme)),
+        Cell::from(Line::from(d::header_cell("diverge ↓", true, theme)).right_aligned()),
+        Cell::from(d::header_cell("tags", false, theme)),
+        Cell::from(Line::from(d::header_cell("seen", false, theme)).right_aligned()),
     ]);
 
     let tag_width = (inner.width as usize * 22 / 100).max(10);
@@ -424,20 +433,25 @@ fn render_hosts_tab(
                 .is_some_and(|s| s.hostname == h.hostname && s.port == h.port);
 
             let dot_color = match h.status {
-                super::HostStatus::Online => d::GREEN,
-                super::HostStatus::Offline => d::RED,
+                super::HostStatus::Online => theme.status_good,
+                super::HostStatus::Offline => theme.status_error,
                 // Not a grey dot implying a reading — a colour that reads as
                 // "no signal".
-                super::HostStatus::NeverProbed => d::NEVER_DOT,
+                super::HostStatus::NeverProbed => theme.absent,
             };
 
             let diverge = match h.diverge_count {
                 None => Span::styled(
                     "never probed",
-                    Style::default().fg(d::FAINT).add_modifier(Modifier::ITALIC),
+                    Style::default()
+                        .fg(theme.border)
+                        .add_modifier(Modifier::ITALIC),
                 ),
-                Some(0) => Span::styled("—", Style::default().fg(d::FAINT)),
-                Some(n) => Span::styled(n.to_string(), Style::default().fg(d::divergence_count(n))),
+                Some(0) => Span::styled("—", Style::default().fg(theme.border)),
+                Some(n) => Span::styled(
+                    n.to_string(),
+                    Style::default().fg(theme.divergence_count(n)),
+                ),
             };
 
             // Tags as chips, whole or not at all, with a +N for the rest.
@@ -446,12 +460,12 @@ fn render_hosts_tab(
             for c in &chips {
                 let implicated = h.diverge_count.is_some_and(|n| n > 0)
                     && (c.starts_with("role=") || c.starts_with("env="));
-                tag_spans.push(d::chip(c, implicated));
+                tag_spans.push(d::chip(c, implicated, theme));
             }
             if hidden > 0 {
                 tag_spans.push(Span::styled(
                     format!("+{}", hidden),
-                    Style::default().fg(d::FAINT),
+                    Style::default().fg(theme.border),
                 ));
             }
 
@@ -462,23 +476,24 @@ fn render_hosts_tab(
             };
 
             let marker = if is_selected {
-                Span::styled("▌", Style::default().fg(d::CYAN))
+                Span::styled("▌", Style::default().fg(theme.brand))
             } else {
                 Span::raw(" ")
             };
             let row = Row::new(vec![
                 Cell::from(Line::from(vec![marker, Span::raw(" "), d::dot(dot_color)])),
-                Cell::from(h.name.clone()).style(Style::default().fg(d::WHITE)),
-                Cell::from(h.hostname.clone()).style(Style::default().fg(d::DIM)),
+                Cell::from(h.name.clone()).style(Style::default().fg(theme.text_emphasis)),
+                Cell::from(h.hostname.clone()).style(Style::default().fg(theme.text_secondary)),
                 Cell::from(Line::from(h.port.to_string()).right_aligned())
-                    .style(Style::default().fg(d::DIM)),
-                Cell::from(h.user.clone()).style(Style::default().fg(d::DIM)),
+                    .style(Style::default().fg(theme.text_secondary)),
+                Cell::from(h.user.clone()).style(Style::default().fg(theme.text_secondary)),
                 Cell::from(Line::from(diverge).right_aligned()),
                 Cell::from(Line::from(tag_spans)),
-                Cell::from(Line::from(seen).right_aligned()).style(Style::default().fg(d::FAINT)),
+                Cell::from(Line::from(seen).right_aligned())
+                    .style(Style::default().fg(theme.border)),
             ]);
             if is_selected {
-                row.style(Style::default().bg(d::ROW_SELECTED_BG))
+                row.style(Style::default().bg(theme.selection_bg))
             } else {
                 row
             }
@@ -525,10 +540,10 @@ fn render_groups_panel(
 
     let header = Row::new(vec![
         Cell::from(""),
-        Cell::from(d::header_cell("group", false)),
-        Cell::from(Line::from(d::header_cell("hosts", false)).right_aligned()),
-        Cell::from(Line::from(d::header_cell("at consensus", false)).right_aligned()),
-        Cell::from(d::header_cell("note", false)),
+        Cell::from(d::header_cell("group", false, theme)),
+        Cell::from(Line::from(d::header_cell("hosts", false, theme)).right_aligned()),
+        Cell::from(Line::from(d::header_cell("at consensus", false, theme)).right_aligned()),
+        Cell::from(d::header_cell("note", false, theme)),
     ]);
 
     let rows: Vec<Row> = groups
@@ -542,11 +557,11 @@ fn render_groups_panel(
                 1.0 - (g.at_consensus as f64 / probed as f64)
             };
             let col = if probed == 0 {
-                d::FAINT
+                theme.border
             } else if severity > 0.0 {
-                d::divergence(severity)
+                theme.ramp_divergence(severity)
             } else {
-                d::GREEN
+                theme.status_good
             };
             let consensus = if probed == 0 {
                 "—".to_string()
@@ -555,12 +570,14 @@ fn render_groups_panel(
             };
             Row::new(vec![
                 Cell::from(Line::from(d::dot(col))),
-                Cell::from(g.label.clone()).style(Style::default().fg(d::WHITE)),
+                Cell::from(g.label.clone()).style(Style::default().fg(theme.text_emphasis)),
                 Cell::from(Line::from(g.host_count.to_string()).right_aligned())
-                    .style(Style::default().fg(d::DIM)),
+                    .style(Style::default().fg(theme.text_secondary)),
                 Cell::from(Line::from(consensus).right_aligned()).style(Style::default().fg(col)),
                 Cell::from(g.note()).style(if probed == 0 {
-                    Style::default().fg(d::FAINT).add_modifier(Modifier::ITALIC)
+                    Style::default()
+                        .fg(theme.border)
+                        .add_modifier(Modifier::ITALIC)
                 } else {
                     Style::default().fg(col)
                 }),
@@ -682,12 +699,14 @@ fn render_consensus_box(
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("{:.1}%", pct),
-                    Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.text_emphasis)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
                 Span::styled(
                     format!("of {} facet-checks agree", c.total_checks),
-                    Style::default().fg(d::DIM),
+                    Style::default().fg(theme.text_secondary),
                 ),
             ]));
             let plural = |n: usize, w: &str| {
@@ -703,19 +722,23 @@ fn render_consensus_box(
                     plural(c.diverging_facets, "facet"),
                     plural(c.diverging_hosts, "host")
                 ),
-                Style::default().fg(d::DIM),
+                Style::default().fg(theme.text_secondary),
             )));
             if c.unprobed_hosts > 0 {
                 // The distinction v1's `Offline: 8` destroyed.
-                lines.push(d::none_line(&format!(
-                    "{} hosts have never been probed, so their facets are unknown rather than in agreement.",
-                    c.unprobed_hosts
-                )));
+                lines.push(d::none_line(
+                    &format!(
+                        "{} hosts have never been probed, so their facets are unknown rather than in agreement.",
+                        c.unprobed_hosts
+                    ),
+                    theme,
+                ));
             }
         }
         _ => {
             lines.push(d::none_line(
                 "no facets collected yet — connect to a host to compare it against its peers",
+                theme,
             ));
         }
     }
@@ -731,15 +754,21 @@ fn render_consensus_box(
         .filter(|h| h.status == super::HostStatus::NeverProbed)
         .count();
     let mut reach = vec![
-        Span::styled("reachable ", Style::default().fg(d::FAINT)),
-        Span::styled(online.to_string(), Style::default().fg(d::DIM)),
-        Span::styled(" of ", Style::default().fg(d::FAINT)),
-        Span::styled(hosts.len().to_string(), Style::default().fg(d::DIM)),
+        Span::styled("reachable ", Style::default().fg(theme.border)),
+        Span::styled(
+            online.to_string(),
+            Style::default().fg(theme.text_secondary),
+        ),
+        Span::styled(" of ", Style::default().fg(theme.border)),
+        Span::styled(
+            hosts.len().to_string(),
+            Style::default().fg(theme.text_secondary),
+        ),
     ];
     if never > 0 {
         reach.push(Span::styled(
             format!(" · {} never probed", never),
-            Style::default().fg(d::FAINT),
+            Style::default().fg(theme.border),
         ));
     }
     lines.push(Line::from(reach));
@@ -767,9 +796,9 @@ fn render_consensus_box(
                 // column of bright bars at 100% reads as a solid block and
                 // buries the one facet that actually diverges.
                 let col = if *frac >= 1.0 {
-                    d::GREEN_MUTED
+                    theme.muted_good
                 } else {
-                    d::divergence(1.0 - frac)
+                    theme.ramp_divergence(1.0 - frac)
                 };
                 let (fill, track) = d::meter(*frac, meter_w);
                 vec![
@@ -780,10 +809,14 @@ fn render_consensus_box(
                             w = label_w
                         ),
                         // A diverging facet's name is the thing to read.
-                        Style::default().fg(if *frac >= 1.0 { d::FAINT } else { d::FG }),
+                        Style::default().fg(if *frac >= 1.0 {
+                            theme.border
+                        } else {
+                            theme.text_primary
+                        }),
                     ),
                     Span::styled(fill, Style::default().fg(col)),
-                    Span::styled(track, Style::default().fg(d::FAINT)),
+                    Span::styled(track, Style::default().fg(theme.border)),
                     Span::styled(format!("{:>4.0}% ", frac * 100.0), Style::default().fg(col)),
                     Span::raw("  "),
                 ]
@@ -798,7 +831,7 @@ fn render_consensus_box(
         if shown < facet_agreement.len() {
             lines.push(Line::from(Span::styled(
                 format!("+{} more facets", facet_agreement.len() - shown),
-                Style::default().fg(d::FAINT),
+                Style::default().fg(theme.border),
             )));
         }
         f.render_widget(Paragraph::new(lines), cols[1]);
@@ -831,10 +864,10 @@ fn render_fleet_table(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], t
 
     let header = Row::new(vec![
         Cell::from(""),
-        Cell::from(d::header_cell("host", false)),
-        Cell::from(Line::from(d::header_cell("diverge ↓", true)).right_aligned()),
-        Cell::from(Line::from(d::header_cell("rtt", false)).right_aligned()),
-        Cell::from(d::header_cell("60s", false)),
+        Cell::from(d::header_cell("host", false, theme)),
+        Cell::from(Line::from(d::header_cell("diverge ↓", true, theme)).right_aligned()),
+        Cell::from(Line::from(d::header_cell("rtt", false, theme)).right_aligned()),
+        Cell::from(d::header_cell("60s", false, theme)),
     ]);
 
     let at_consensus = ordered
@@ -849,26 +882,26 @@ fn render_fleet_table(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], t
         .map(|h| match h.diverge_count {
             // Never probed: one honest line, not a row of dashes.
             None => Row::new(vec![
-                Cell::from(Line::from(d::dot(d::NEVER_DOT))),
-                Cell::from(h.name.clone()).style(Style::default().fg(d::DIM)),
-                Cell::from(d::none_line("never probed — no facts to compare")),
+                Cell::from(Line::from(d::dot(theme.absent))),
+                Cell::from(h.name.clone()).style(Style::default().fg(theme.text_secondary)),
+                Cell::from(d::none_line("never probed — no facts to compare", theme)),
                 Cell::from(""),
                 Cell::from(""),
             ]),
             Some(n) => {
-                let col = d::divergence_count(n);
+                let col = theme.divergence_count(n);
                 let spark = if h.latency_history.is_empty() {
                     Span::raw("")
                 } else {
                     let ceiling = d::axis_ceiling(&h.latency_history);
                     Span::styled(
                         d::sparkline(&h.latency_history, 12, ceiling),
-                        Style::default().fg(d::GREEN_MUTED),
+                        Style::default().fg(theme.muted_good),
                     )
                 };
                 Row::new(vec![
                     Cell::from(Line::from(d::dot(col))),
-                    Cell::from(h.name.clone()).style(Style::default().fg(d::WHITE)),
+                    Cell::from(h.name.clone()).style(Style::default().fg(theme.text_emphasis)),
                     Cell::from(
                         Line::from(Span::styled(n.to_string(), Style::default().fg(col)))
                             .right_aligned(),
@@ -880,7 +913,7 @@ fn render_fleet_table(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], t
                         })
                         .right_aligned(),
                     )
-                    .style(Style::default().fg(d::DIM)),
+                    .style(Style::default().fg(theme.text_secondary)),
                     Cell::from(Line::from(spark)),
                 ])
             }
@@ -911,9 +944,14 @@ fn render_fleet_table(f: &mut Frame, area: Rect, hosts: &[super::HostDisplay], t
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     at_consensus.to_string(),
-                    Style::default().fg(d::GREEN).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.status_good)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" hosts at full consensus", Style::default().fg(d::DIM)),
+                Span::styled(
+                    " hosts at full consensus",
+                    Style::default().fg(theme.text_secondary),
+                ),
             ])),
             row,
         );
@@ -947,6 +985,14 @@ fn render_config_tab(f: &mut Frame, area: Rect, theme: &Theme) {
             Style::default().fg(theme.text_muted),
         ),
         Line::styled(
+            "  Ctrl+P (F10 in a session) opens the menu — type a theme name to",
+            Style::default().fg(theme.text_muted),
+        ),
+        Line::styled(
+            "  jump straight to it.",
+            Style::default().fg(theme.text_muted),
+        ),
+        Line::styled(
             "  Changes reload from ~/.essh/config.toml without restarting.",
             Style::default().fg(theme.text_muted),
         ),
@@ -966,18 +1012,20 @@ fn render_footer(
     status: Option<&str>,
     search_active: bool,
     search_query: &str,
-    _theme: &Theme,
+    theme: &Theme,
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
     if search_active {
         lines.push(Line::from(vec![
-            Span::styled(" / ", Style::default().fg(d::CYAN)),
+            Span::styled(" / ", Style::default().fg(theme.brand)),
             Span::styled(
                 search_query.to_string(),
-                Style::default().fg(d::FG).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.text_primary)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("▌", Style::default().fg(d::CYAN)),
+            Span::styled("▌", Style::default().fg(theme.brand)),
         ]));
     }
 
@@ -1002,12 +1050,12 @@ fn render_footer(
         ],
         _ => &[("⏎", "connect"), ("^P", "palette"), ("q", "quit")],
     };
-    lines.push(d::footer_line(pairs));
+    lines.push(d::footer_line(pairs, theme));
 
     if let Some(msg) = status {
         lines.push(Line::from(Span::styled(
             format!(" {}", msg),
-            Style::default().fg(d::AMBER),
+            Style::default().fg(theme.status_warn),
         )));
     }
 

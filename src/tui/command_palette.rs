@@ -22,6 +22,10 @@ pub enum PaletteAction {
     SetDashboardTab(DashboardTab),
     ToggleSplitPane,
     ToggleHelp,
+    /// Apply a named theme and persist it. One entry per theme rather than a
+    /// single "cycle": the palette exists to go straight to a thing, and
+    /// cycling to `sky` means pressing `t` seven times.
+    SetTheme(&'static str),
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +61,13 @@ impl CommandPalette {
     }
 
     /// Rebuild the entry list based on current query, hosts, and sessions.
-    pub fn update(&mut self, hosts: &[HostDisplay], sessions: &[Session], has_sessions: bool) {
+    pub fn update(
+        &mut self,
+        hosts: &[HostDisplay],
+        sessions: &[Session],
+        has_sessions: bool,
+        active_theme: &str,
+    ) {
         let split_hint = meta_key_hint("s");
         let monitor_hint = meta_key_hint("m");
         let portfwd_hint = meta_key_hint("p");
@@ -165,6 +175,22 @@ impl CommandPalette {
             });
         }
 
+        for name in crate::theme::THEME_NAMES {
+            entries.push(PaletteEntry {
+                icon: "◐",
+                label: format!("Theme: {name}"),
+                detail: if *name == active_theme {
+                    "active".to_string()
+                } else if *name == "terminal" {
+                    "Use the terminal's own palette".to_string()
+                } else {
+                    "Apply and save".to_string()
+                },
+                action: PaletteAction::SetTheme(name),
+                score: 0,
+            });
+        }
+
         entries.push(PaletteEntry {
             icon: "?",
             label: "Help".to_string(),
@@ -266,7 +292,7 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
 
     // ── the scrim: dim everything behind the card
     frame.render_widget(
-        Block::default().style(Style::default().bg(d::BG).fg(d::FAINT)),
+        Block::default().style(Style::default().bg(theme.bg).fg(theme.border)),
         area,
     );
 
@@ -283,7 +309,7 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
     // The card's own surface, a shade above the background so it reads as
     // lifted rather than as a hole.
     frame.render_widget(
-        Block::default().style(Style::default().bg(d::RULE).fg(d::FG)),
+        Block::default().style(Style::default().bg(theme.separator).fg(theme.text_primary)),
         card,
     );
 
@@ -300,19 +326,21 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
     // ── query line: `› host ▌`
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("› ", Style::default().fg(d::CYAN)),
+            Span::styled("› ", Style::default().fg(theme.brand)),
             Span::styled(
                 palette.query.clone(),
-                Style::default().fg(d::FG).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.text_primary)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("▌", Style::default().fg(d::CYAN)),
+            Span::styled("▌", Style::default().fg(theme.brand)),
         ])),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
 
     if palette.entries.is_empty() {
         frame.render_widget(
-            Paragraph::new(d::none_line("nothing matches")),
+            Paragraph::new(d::none_line("nothing matches", theme)),
             Rect::new(inner.x, inner.y + 2, inner.width, 1),
         );
         return;
@@ -337,15 +365,17 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
 
         if selected {
             frame.render_widget(
-                Block::default().style(Style::default().bg(d::ROW_SELECTED_BG)),
+                Block::default().style(Style::default().bg(theme.selection_bg)),
                 row,
             );
         }
 
         let label_style = if selected {
-            Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.text_emphasis)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(d::FG)
+            Style::default().fg(theme.text_primary)
         };
 
         // Results carry consequence — "3 facets differ", "10 · 2 reachable" —
@@ -360,11 +390,15 @@ pub fn render(frame: &mut Frame, palette: &CommandPalette, theme: &Theme) {
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     format!("{} ", entry.icon),
-                    Style::default().fg(if selected { d::CYAN } else { d::DIM }),
+                    Style::default().fg(if selected {
+                        theme.brand
+                    } else {
+                        theme.text_secondary
+                    }),
                 ),
                 Span::styled(entry.label.clone(), label_style),
                 Span::raw(" ".repeat(gap)),
-                Span::styled(hint, Style::default().fg(d::FAINT)),
+                Span::styled(hint, Style::default().fg(theme.border)),
             ])),
             row,
         );
@@ -418,7 +452,7 @@ mod tests {
     #[test]
     fn test_palette_update_no_query() {
         let mut p = CommandPalette::new();
-        p.update(&[], &[], false);
+        p.update(&[], &[], false, "dark");
         // Should have at least the navigation + help entries
         assert!(p.entries.len() >= 5);
     }
@@ -427,14 +461,14 @@ mod tests {
     fn test_palette_update_filters() {
         let mut p = CommandPalette::new();
         p.query = "help".to_string();
-        p.update(&[], &[], false);
+        p.update(&[], &[], false, "dark");
         assert!(p.entries.iter().any(|e| e.label.contains("Help")));
     }
 
     #[test]
     fn test_palette_move_down_wraps() {
         let mut p = CommandPalette::new();
-        p.update(&[], &[], false);
+        p.update(&[], &[], false, "dark");
         let len = p.entries.len();
         for _ in 0..len {
             p.move_down();
@@ -445,8 +479,46 @@ mod tests {
     #[test]
     fn test_palette_move_up_wraps() {
         let mut p = CommandPalette::new();
-        p.update(&[], &[], false);
+        p.update(&[], &[], false, "dark");
         p.move_up();
         assert_eq!(p.selected, p.entries.len() - 1);
+    }
+
+    #[test]
+    fn every_theme_is_reachable_from_the_palette() {
+        // `t` cycles, which means reaching `sky` from `dark` is seven presses.
+        // The palette is how you go straight there, so every theme has to have
+        // an entry — including any added later.
+        let mut p = CommandPalette::new();
+        p.update(&[], &[], false, "dark");
+        for name in crate::theme::THEME_NAMES {
+            let want = format!("Theme: {name}");
+            assert!(
+                p.entries.iter().any(|e| e.label == want),
+                "{name} has no palette entry"
+            );
+        }
+    }
+
+    #[test]
+    fn the_active_theme_says_so_and_typing_its_name_finds_it() {
+        let mut p = CommandPalette::new();
+        p.update(&[], &[], false, "dracula");
+        let active: Vec<&PaletteEntry> = p
+            .entries
+            .iter()
+            .filter(|e| e.label.starts_with("Theme: ") && e.detail == "active")
+            .collect();
+        assert_eq!(active.len(), 1, "exactly one theme is active");
+        assert_eq!(active[0].label, "Theme: dracula");
+
+        // Fuzzy search has to actually land on it.
+        p.query = "drac".to_string();
+        p.update(&[], &[], false, "dark");
+        assert_eq!(
+            p.entries.first().map(|e| e.label.as_str()),
+            Some("Theme: dracula"),
+            "typing a theme name does not surface it first"
+        );
     }
 }

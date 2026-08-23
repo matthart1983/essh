@@ -269,12 +269,15 @@ fn render_footer(f: &mut Frame, area: Rect, theme: &Theme) {
     let _ = theme;
     // The navigation and transfer binds live on the panel rules; these are the
     // ones that belong to the screen rather than to a pane.
-    let footer = Paragraph::new(d::footer_line(&[
-        ("m", "mkdir"),
-        ("Del", "delete"),
-        ("t", "theme"),
-        ("⎋", "close"),
-    ]));
+    let footer = Paragraph::new(d::footer_line(
+        &[
+            ("m", "mkdir"),
+            ("Del", "delete"),
+            ("t", "theme"),
+            ("⎋", "close"),
+        ],
+        theme,
+    ));
     f.render_widget(footer, area);
 }
 

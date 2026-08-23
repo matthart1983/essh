@@ -58,6 +58,14 @@ pub fn render(f: &mut Frame, theme: &Theme, prefix: &str, scroll: u16) {
             Span::styled("F10", key_style),
             Span::styled(" command menu", desc_style),
         ]),
+        // Stock macOS maps that row to brightness and volume — F1 dims the
+        // screen, F10 mutes. Advertising the keys without saying so sends a
+        // Mac user to change their volume and wonder why nothing happened.
+        #[cfg(target_os = "macos")]
+        Line::from(Span::styled(
+            "                         hold fn, or turn on Keyboard → \"Use F1, F2 as standard function keys\"",
+            desc_style,
+        )),
         Line::raw(""),
         Line::from(vec![
             Span::styled("  For everything else, press ", desc_style),

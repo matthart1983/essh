@@ -34,7 +34,7 @@ pub fn render(
 ) {
     // ── the scrim
     f.render_widget(
-        Block::default().style(Style::default().bg(d::BG).fg(d::FAINT)),
+        Block::default().style(Style::default().bg(theme.bg).fg(theme.border)),
         area,
     );
 
@@ -43,13 +43,15 @@ pub fn render(
         None => vec![
             Line::from(Span::styled(
                 "No peer set for this host.",
-                Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.text_emphasis)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(Span::styled(
                 "Divergence compares a host against others sharing a tag. Tag two \
                  or more hosts alike — role=web, env=prod — and they become peers.",
-                Style::default().fg(d::DIM),
+                Style::default().fg(theme.text_secondary),
             )),
         ],
     };
@@ -65,7 +67,7 @@ pub fn render(
 
     f.render_widget(Clear, card);
     f.render_widget(
-        Block::default().style(Style::default().bg(d::RULE).fg(d::FG)),
+        Block::default().style(Style::default().bg(theme.separator).fg(theme.text_primary)),
         card,
     );
 
@@ -90,7 +92,7 @@ pub fn render(
             height: 1,
         };
         f.render_widget(
-            Paragraph::new(d::footer_line(&[("⎋", "close"), ("D", "toggle")])),
+            Paragraph::new(d::footer_line(&[("⎋", "close"), ("D", "toggle")], theme)),
             hint,
         );
     }
@@ -102,16 +104,21 @@ fn body<'a>(
     platform: &'a str,
     // The divergence card is a raised modal, not a panel: it keeps its own
     // fill and rule rather than the theme's, so nothing here reads the theme.
-    _theme: &Theme,
+    theme: &Theme,
 ) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
     lines.push(Line::from(vec![
         Span::styled(
             d.host.clone(),
-            Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.text_emphasis)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("  vs {}", d.peer_set), Style::default().fg(d::DIM)),
+        Span::styled(
+            format!("  vs {}", d.peer_set),
+            Style::default().fg(theme.text_secondary),
+        ),
     ]));
 
     // Never claim a facet count we did not attempt. On macOS several of the
@@ -129,14 +136,16 @@ fn body<'a>(
     }
     lines.push(Line::from(Span::styled(
         coverage,
-        Style::default().fg(d::DIM),
+        Style::default().fg(theme.text_secondary),
     )));
     lines.push(Line::from(""));
 
     if !d.is_probed() {
         lines.push(Line::from(Span::styled(
             "Never probed — no facts to compare.",
-            Style::default().fg(d::FAINT).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(theme.border)
+                .add_modifier(Modifier::ITALIC),
         )));
         return lines;
     }
@@ -145,9 +154,14 @@ fn body<'a>(
     if let Some(v) = verdict_for(d) {
         lines.push(Line::from(Span::styled(
             "VERDICT",
-            Style::default().fg(d::CYAN).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.brand)
+                .add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(Span::styled(v.text, Style::default().fg(d::FG))));
+        lines.push(Line::from(Span::styled(
+            v.text,
+            Style::default().fg(theme.text_primary),
+        )));
         lines.push(Line::from(Span::styled(
             format!(
                 "  evidence: {}",
@@ -157,7 +171,9 @@ fn body<'a>(
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Style::default().fg(d::FAINT).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(theme.border)
+                .add_modifier(Modifier::ITALIC),
         )));
         lines.push(Line::from(""));
     }
@@ -166,23 +182,25 @@ fn body<'a>(
     if diverging.is_empty() {
         lines.push(Line::from(Span::styled(
             "At consensus on every collected facet.",
-            Style::default().fg(d::GREEN),
+            Style::default().fg(theme.status_good),
         )));
     } else {
         lines.push(Line::from(Span::styled(
             "DIVERGING",
-            Style::default().fg(d::CYAN).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.brand)
+                .add_modifier(Modifier::BOLD),
         )));
         for c in &diverging {
             // Colour by how alone this host is, not by magnitude: red means
             // "you are the only one", never "the number is large".
             // Red means "you are alone", straight off the divergence ramp —
             // never a magnitude judgement.
-            let colour = d::divergence(c.severity);
+            let colour = theme.ramp_divergence(c.severity);
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("  {:<20} ", c.key.label()),
-                    Style::default().fg(d::DIM),
+                    Style::default().fg(theme.text_secondary),
                 ),
                 Span::styled(c.summary(), Style::default().fg(colour)),
             ]));
@@ -195,11 +213,13 @@ fn body<'a>(
         let names: Vec<String> = d.identical.iter().map(|k| k.label()).collect();
         lines.push(Line::from(Span::styled(
             format!("{} facets identical across peers", d.identical.len()),
-            Style::default().fg(d::DIM),
+            Style::default().fg(theme.text_secondary),
         )));
         lines.push(Line::from(Span::styled(
             format!("  {}", names.join(" · ")),
-            Style::default().fg(d::FAINT).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(theme.border)
+                .add_modifier(Modifier::ITALIC),
         )));
     }
 
@@ -212,7 +232,9 @@ fn body<'a>(
                 d.unprobed_peers.len(),
                 d.unprobed_peers.join(", ")
             ),
-            Style::default().fg(d::FAINT).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(theme.border)
+                .add_modifier(Modifier::ITALIC),
         )));
     }
 

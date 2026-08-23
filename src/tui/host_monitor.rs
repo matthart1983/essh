@@ -86,12 +86,17 @@ fn headline_box(
             lines.push(Line::from(vec![
                 Span::styled(
                     v,
-                    Style::default().fg(d::WHITE).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.text_emphasis)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
-                Span::styled(unit, Style::default().fg(d::DIM)),
+                Span::styled(unit, Style::default().fg(theme.text_secondary)),
             ]));
-            lines.push(Line::from(Span::styled(sub, Style::default().fg(d::FAINT))));
+            lines.push(Line::from(Span::styled(
+                sub,
+                Style::default().fg(theme.border),
+            )));
             if inner.height > 2 && !history.is_empty() {
                 let ceiling = d::axis_ceiling(history);
                 lines.push(Line::from(Span::styled(
@@ -101,7 +106,7 @@ fn headline_box(
             }
         }
         // No value: say why, in words, and draw no curve.
-        None => lines.push(d::none_line(&explanation(state))),
+        None => lines.push(d::none_line(&explanation(state), theme)),
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -121,7 +126,7 @@ pub fn render(
     peers: &PeerContext,
     theme: &Theme,
 ) {
-    d::paint_bg(f, area);
+    d::paint_bg(f, area, theme);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -164,7 +169,7 @@ pub fn render(
         cpu_sub,
         &metrics.status.cpu,
         &cpu_history.as_slice_vec(),
-        d::magnitude(cpu.unwrap_or(0.0)),
+        theme.magnitude(cpu.unwrap_or(0.0)),
     );
 
     let mem_pct = metrics.mem_percent();
@@ -197,7 +202,7 @@ pub fn render(
         mem_sub,
         &metrics.status.mem,
         &mem_history.as_slice_vec(),
-        d::ramp_at(&d::RAMP_NET, mem_pct.unwrap_or(0.0) / 100.0),
+        theme.ramp_net(mem_pct.unwrap_or(0.0) / 100.0),
     );
 
     let net = metrics.net_opt();
@@ -216,7 +221,7 @@ pub fn render(
         net_sub,
         &metrics.status.net,
         &net_rx_history.as_slice_vec(),
-        d::VIOLET,
+        theme.tx_rate,
     );
     let _ = net_tx_history;
 
@@ -253,7 +258,7 @@ fn render_disk(f: &mut Frame, area: Rect, metrics: &HostMetrics, theme: &Theme) 
 
     if !metrics.status.disk.is_collected() {
         f.render_widget(
-            Paragraph::new(d::none_line(&explanation(&metrics.status.disk))),
+            Paragraph::new(d::none_line(&explanation(&metrics.status.disk), theme)),
             inner,
         );
         return;
@@ -261,11 +266,11 @@ fn render_disk(f: &mut Frame, area: Rect, metrics: &HostMetrics, theme: &Theme) 
 
     let disks = metrics.user_disks();
     let header = Row::new(vec![
-        Cell::from(d::header_cell("mount", false)),
-        Cell::from(Line::from(d::header_cell("used", false)).right_aligned()),
-        Cell::from(Line::from(d::header_cell("avail", false)).right_aligned()),
-        Cell::from(d::header_cell("use", false)),
-        Cell::from(Line::from(d::header_cell("%", false)).right_aligned()),
+        Cell::from(d::header_cell("mount", false, theme)),
+        Cell::from(Line::from(d::header_cell("used", false, theme)).right_aligned()),
+        Cell::from(Line::from(d::header_cell("avail", false, theme)).right_aligned()),
+        Cell::from(d::header_cell("use", false, theme)),
+        Cell::from(Line::from(d::header_cell("%", false, theme)).right_aligned()),
     ]);
 
     let meter_width = 12usize;
@@ -275,19 +280,20 @@ fn render_disk(f: &mut Frame, area: Rect, metrics: &HostMetrics, theme: &Theme) 
         .map(|disk| {
             let avail = disk.total_bytes.saturating_sub(disk.used_bytes);
             let (fill, track) = d::meter(disk.use_pct / 100.0, meter_width);
-            let col = d::bounded_bad(disk.use_pct);
+            let col = theme.bounded_bad(disk.use_pct);
             Row::new(vec![
-                Cell::from(truncate_left(&disk.mount, 24)).style(Style::default().fg(d::FG)),
+                Cell::from(truncate_left(&disk.mount, 24))
+                    .style(Style::default().fg(theme.text_primary)),
                 Cell::from(Line::from(widgets::format_bytes(disk.used_bytes)).right_aligned())
-                    .style(Style::default().fg(d::DIM)),
+                    .style(Style::default().fg(theme.text_secondary)),
                 Cell::from(Line::from(widgets::format_bytes(avail)).right_aligned())
-                    .style(Style::default().fg(d::DIM)),
+                    .style(Style::default().fg(theme.text_secondary)),
                 Cell::from(Line::from(vec![
                     Span::styled(fill, Style::default().fg(col)),
-                    Span::styled(track, Style::default().fg(d::RULE)),
+                    Span::styled(track, Style::default().fg(theme.separator)),
                 ])),
                 Cell::from(Line::from(format!("{:.0}%", disk.use_pct)).right_aligned())
-                    .style(Style::default().fg(d::FG)),
+                    .style(Style::default().fg(theme.text_primary)),
             ])
         })
         .collect();
@@ -310,10 +316,13 @@ fn render_disk(f: &mut Frame, area: Rect, metrics: &HostMetrics, theme: &Theme) 
             height: 1,
         };
         f.render_widget(
-            Paragraph::new(d::none_line(&format!(
-                "{} system volumes hidden — none over 1 GB or 90% full",
-                hidden
-            ))),
+            Paragraph::new(d::none_line(
+                &format!(
+                    "{} system volumes hidden — none over 1 GB or 90% full",
+                    hidden
+                ),
+                theme,
+            )),
             note,
         );
     }
@@ -346,7 +355,7 @@ fn render_vs_peers(
 
     if peers.peers == 0 {
         f.render_widget(
-            Paragraph::new(d::none_line("no peer set — tag two hosts alike")),
+            Paragraph::new(d::none_line("no peer set — tag two hosts alike", theme)),
             inner,
         );
         return;
@@ -355,9 +364,9 @@ fn render_vs_peers(
     let mut lines: Vec<Line> = Vec::new();
     let mut row = |label: &str, value: String, note: String, severity: f64| {
         let col = if severity > 0.0 {
-            d::divergence(severity)
+            theme.ramp_divergence(severity)
         } else {
-            d::GREEN
+            theme.status_good
         };
         let pad = 22usize
             .saturating_sub(label.chars().count() + value.chars().count() + 2)
@@ -365,10 +374,13 @@ fn render_vs_peers(
         lines.push(Line::from(vec![
             d::dot(col),
             Span::raw(" "),
-            Span::styled(format!("{:<9}", label), Style::default().fg(d::DIM)),
+            Span::styled(
+                format!("{:<9}", label),
+                Style::default().fg(theme.text_secondary),
+            ),
             Span::styled(value, Style::default().fg(col)),
             Span::raw(" ".repeat(pad)),
-            Span::styled(note, Style::default().fg(d::FAINT)),
+            Span::styled(note, Style::default().fg(theme.border)),
         ]));
     };
 
@@ -396,7 +408,7 @@ fn render_vs_peers(
     }
 
     if lines.is_empty() {
-        lines.push(d::none_line("nothing collected yet"));
+        lines.push(d::none_line("nothing collected yet", theme));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -454,18 +466,18 @@ fn render_processes(
 
     if !metrics.status.procs.is_collected() {
         f.render_widget(
-            Paragraph::new(d::none_line(&explanation(&metrics.status.procs))),
+            Paragraph::new(d::none_line(&explanation(&metrics.status.procs), theme)),
             inner,
         );
         return;
     }
 
     let header = Row::new(vec![
-        Cell::from(Line::from(d::header_cell("pid", false)).right_aligned()),
-        Cell::from(d::header_cell("command", false)),
-        Cell::from(Line::from(d::header_cell("cpu%", false)).right_aligned()),
-        Cell::from(Line::from(d::header_cell("mem%", false)).right_aligned()),
-        Cell::from(Line::from(d::header_cell("rss", false)).right_aligned()),
+        Cell::from(Line::from(d::header_cell("pid", false, theme)).right_aligned()),
+        Cell::from(d::header_cell("command", false, theme)),
+        Cell::from(Line::from(d::header_cell("cpu%", false, theme)).right_aligned()),
+        Cell::from(Line::from(d::header_cell("mem%", false, theme)).right_aligned()),
+        Cell::from(Line::from(d::header_cell("rss", false, theme)).right_aligned()),
     ]);
 
     let name_width = (inner.width as usize)
@@ -478,14 +490,20 @@ fn render_processes(
         .map(|p| {
             Row::new(vec![
                 Cell::from(Line::from(p.pid.to_string()).right_aligned())
-                    .style(Style::default().fg(d::FAINT)),
-                Cell::from(truncate_left(&p.name, name_width)).style(Style::default().fg(d::FG)),
-                Cell::from(Line::from(format!("{:.1}", p.cpu_pct)).right_aligned())
-                    .style(Style::default().fg(if p.cpu_pct > 2.0 { d::AMBER } else { d::FG })),
+                    .style(Style::default().fg(theme.border)),
+                Cell::from(truncate_left(&p.name, name_width))
+                    .style(Style::default().fg(theme.text_primary)),
+                Cell::from(Line::from(format!("{:.1}", p.cpu_pct)).right_aligned()).style(
+                    Style::default().fg(if p.cpu_pct > 2.0 {
+                        theme.status_warn
+                    } else {
+                        theme.text_primary
+                    }),
+                ),
                 Cell::from(Line::from(format!("{:.1}", p.mem_pct)).right_aligned())
-                    .style(Style::default().fg(d::DIM)),
+                    .style(Style::default().fg(theme.text_secondary)),
                 Cell::from(Line::from(widgets::format_kb(p.mem_rss_kb)).right_aligned())
-                    .style(Style::default().fg(d::DIM)),
+                    .style(Style::default().fg(theme.text_secondary)),
             ])
         })
         .collect();
@@ -516,7 +534,7 @@ pub fn render_essentials(
     rtt_ms: Option<f64>,
     theme: &Theme,
 ) {
-    d::paint_bg(f, area);
+    d::paint_bg(f, area, theme);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -560,7 +578,7 @@ pub fn render_essentials(
         String::new(),
         &metrics.status.cpu,
         &cpu_history.unwrap_or(&empty).as_slice_vec(),
-        d::magnitude(cpu.unwrap_or(0.0)),
+        theme.magnitude(cpu.unwrap_or(0.0)),
     );
 
     let mem_pct = metrics.mem_percent();
@@ -580,7 +598,7 @@ pub fn render_essentials(
         String::new(),
         &metrics.status.mem,
         &mem_history.unwrap_or(&empty).as_slice_vec(),
-        d::ramp_at(&d::RAMP_NET, mem_pct.unwrap_or(0.0) / 100.0),
+        theme.ramp_net(mem_pct.unwrap_or(0.0) / 100.0),
     );
 
     // Disk: the fullest volume only.
@@ -603,21 +621,24 @@ pub fn render_essentials(
                     Line::from(vec![
                         Span::styled(
                             truncate_left(&disk.mount, inner.width.saturating_sub(6) as usize),
-                            Style::default().fg(d::DIM),
+                            Style::default().fg(theme.text_secondary),
                         ),
                         Span::raw(" "),
-                        Span::styled(format!("{:.0}%", disk.use_pct), Style::default().fg(d::FG)),
+                        Span::styled(
+                            format!("{:.0}%", disk.use_pct),
+                            Style::default().fg(theme.text_primary),
+                        ),
                     ]),
                     Line::from(vec![
-                        Span::styled(fill, Style::default().fg(d::bounded_bad(disk.use_pct))),
-                        Span::styled(track, Style::default().fg(d::RULE)),
+                        Span::styled(fill, Style::default().fg(theme.bounded_bad(disk.use_pct))),
+                        Span::styled(track, Style::default().fg(theme.separator)),
                     ]),
                 ]),
                 inner,
             );
         }
         None => f.render_widget(
-            Paragraph::new(d::none_line(&explanation(&metrics.status.disk))),
+            Paragraph::new(d::none_line(&explanation(&metrics.status.disk), theme)),
             inner,
         ),
     }
@@ -635,7 +656,7 @@ pub fn render_essentials(
             .unwrap_or_default(),
         &metrics.status.net,
         &net_history.unwrap_or(&empty).as_slice_vec(),
-        d::VIOLET,
+        theme.tx_rate,
     );
 
     // Top processes, name + cpu + rss only.
@@ -664,15 +685,19 @@ pub fn render_essentials(
                 Line::from(vec![
                     Span::styled(
                         format!("{:<w$}", truncate_left(&p.name, name_width), w = name_width),
-                        Style::default().fg(d::FG),
+                        Style::default().fg(theme.text_primary),
                     ),
                     Span::styled(
                         format!("{:>w$.1}", p.cpu_pct, w = cpu_w),
-                        Style::default().fg(if p.cpu_pct > 2.0 { d::AMBER } else { d::FG }),
+                        Style::default().fg(if p.cpu_pct > 2.0 {
+                            theme.status_warn
+                        } else {
+                            theme.text_primary
+                        }),
                     ),
                     Span::styled(
                         format!("{:>w$}", widgets::format_kb(p.mem_rss_kb), w = rss_w),
-                        Style::default().fg(d::DIM),
+                        Style::default().fg(theme.text_secondary),
                     ),
                 ])
             })
@@ -680,7 +705,7 @@ pub fn render_essentials(
         f.render_widget(Paragraph::new(lines), inner);
     } else {
         f.render_widget(
-            Paragraph::new(d::none_line(&explanation(&metrics.status.procs))),
+            Paragraph::new(d::none_line(&explanation(&metrics.status.procs), theme)),
             inner,
         );
     }
