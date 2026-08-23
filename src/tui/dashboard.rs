@@ -321,6 +321,44 @@ fn render_sessions_tab(
 /// outliers are concentrated in a few hosts — says so, because "two hosts
 /// hold every outlier" is a different operational problem from "everything
 /// drifted a little".
+/// Display width, so a CJK hostname or a box-drawing glyph counts for what it
+/// actually occupies rather than for one column.
+fn display_width(s: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    s.width()
+}
+
+/// Cut to `room` display columns, marking the cut. Returns the input whole
+/// when it already fits, and an empty string when there is no room to say
+/// anything — never a bare ellipsis taking a column it cannot justify.
+fn truncate_with_ellipsis(s: &str, room: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+    if display_width(s) <= room {
+        return s.to_string();
+    }
+    if room <= 1 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut w = 0usize;
+    for c in s.chars() {
+        let cw = c.width().unwrap_or(0);
+        if w + cw > room - 1 {
+            break;
+        }
+        out.push(c);
+        w += cw;
+    }
+    // Do not leave the cut mid-word if a word boundary is close behind it.
+    if let Some(i) = out.rfind(' ') {
+        if display_width(&out[..i]) + 8 >= w {
+            out.truncate(i);
+        }
+    }
+    out.push('…');
+    out
+}
+
 fn render_verdict_box(
     f: &mut Frame,
     area: Rect,
@@ -356,22 +394,35 @@ fn render_verdict_box(
     }
 
     for (host, v) in verdicts.iter().take(inner.height as usize) {
+        let prefix = format!("{host}  ");
+        let evidence = if v.evidence.is_empty() {
+            String::new()
+        } else {
+            // The evidence keeps the sentence checkable.
+            let facets: Vec<String> = v.evidence.iter().map(|e| e.label().to_string()).collect();
+            format!("  [{}]", facets.join(", "))
+        };
+
+        // One verdict per row, so a long sentence has to be cut — but cut
+        // visibly. `Paragraph` clips at the box edge with no mark at all,
+        // which turned "ESSH does not infer a shared cause" into "ESSH does
+        // not inf" and read as a rendering fault rather than as more text.
+        // The full sentence is a keypress away in the detail card.
+        let room = (inner.width as usize)
+            .saturating_sub(display_width(&prefix) + display_width(&evidence));
+        let text = truncate_with_ellipsis(&v.text, room);
+
         let mut spans = vec![
             Span::styled(
-                format!("{host}  "),
+                prefix,
                 Style::default()
                     .fg(theme.brand)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(v.text.clone(), Style::default().fg(theme.text_primary)),
+            Span::styled(text, Style::default().fg(theme.text_primary)),
         ];
-        if !v.evidence.is_empty() {
-            // The evidence keeps the sentence checkable.
-            let facets: Vec<String> = v.evidence.iter().map(|e| e.label().to_string()).collect();
-            spans.push(Span::styled(
-                format!("  [{}]", facets.join(", ")),
-                Style::default().fg(theme.border),
-            ));
+        if !evidence.is_empty() {
+            spans.push(Span::styled(evidence, Style::default().fg(theme.border)));
         }
         lines.push(Line::from(spans));
     }
@@ -1316,5 +1367,47 @@ mod fleet_tests {
             last_facet < hosts_row,
             "the facet grid ran past its box into the hosts panel"
         );
+    }
+}
+
+#[cfg(test)]
+mod verdict_tests {
+    use super::{display_width, truncate_with_ellipsis};
+
+    #[test]
+    fn a_verdict_that_fits_is_left_alone() {
+        let s = "os release is behind its peers";
+        assert_eq!(truncate_with_ellipsis(s, 40), s);
+        assert_eq!(truncate_with_ellipsis(s, s.len()), s);
+    }
+
+    #[test]
+    fn a_cut_verdict_says_it_was_cut() {
+        // The bug: `Paragraph` clipped at the box edge with no mark, turning
+        // "ESSH does not infer a shared cause" into "ESSH does not inf" — a
+        // sentence that reads as a rendering fault rather than as more text.
+        let s = "os release is behind its peers and nginx.conf also differs here";
+        let out = truncate_with_ellipsis(s, 30);
+        assert!(out.ends_with('…'), "no mark: {out:?}");
+        assert!(display_width(&out) <= 30, "overflowed: {out:?}");
+        // And it should not cut mid-word when a boundary is close behind.
+        assert!(!out.trim_end_matches('…').ends_with(char::is_alphabetic)
+            || out.trim_end_matches('…').ends_with(' ')
+            || !s[..out.chars().count()].ends_with(char::is_alphabetic));
+    }
+
+    #[test]
+    fn no_room_says_nothing_rather_than_just_an_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("anything", 1), "");
+        assert_eq!(truncate_with_ellipsis("anything", 0), "");
+    }
+
+    #[test]
+    fn width_is_display_width_not_byte_count() {
+        // A CJK hostname occupies two columns per character; counting bytes
+        // would overflow the box and shear every column to its right.
+        assert_eq!(display_width("主機"), 4);
+        let out = truncate_with_ellipsis("主機主機主機", 5);
+        assert!(display_width(&out) <= 5, "{out:?} is {} wide", display_width(&out));
     }
 }

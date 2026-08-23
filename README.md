@@ -25,7 +25,11 @@
   live host metrics, and fleet-wide divergence — without leaving the terminal.
 </p>
 
-![ESSH Demo](https://raw.githubusercontent.com/matthart1983/essh/main/docs/media/essh-demo.gif)
+![Three hosts, one diverged — ESSH naming what differs and why](https://raw.githubusercontent.com/matthart1983/essh/main/docs/media/essh-hero.gif)
+
+<sub>Three real Debian containers, two bookworm and one bullseye. Every figure
+is collected over live sessions — see [`hero.tape`](hero.tape). The full tour is
+[here](https://raw.githubusercontent.com/matthart1983/essh/main/docs/media/essh-demo.gif).</sub>
 
 ## Install
 
