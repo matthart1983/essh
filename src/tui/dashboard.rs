@@ -777,10 +777,10 @@ fn render_consensus_box(
             )));
             if c.unprobed_hosts > 0 {
                 // The distinction v1's `Offline: 8` destroyed.
+                let (n, plural) = (c.unprobed_hosts, if c.unprobed_hosts == 1 { "host has" } else { "hosts have" });
                 lines.push(d::none_line(
                     &format!(
-                        "{} hosts have never been probed, so their facets are unknown rather than in agreement.",
-                        c.unprobed_hosts
+                        "{n} {plural} never been probed, so their facets are unknown rather than in agreement."
                     ),
                     theme,
                 ));
